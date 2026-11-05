@@ -1,8 +1,13 @@
 import { LoginForm } from '@/features/auth'
+import { ThemeSwitcher } from '@/features/theme-switcher'
 
 export function LoginPage() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 dark:bg-slate-950">
+    <main className="relative flex min-h-screen items-center justify-center bg-slate-50 px-4 py-12 dark:bg-slate-950">
+      <div className="absolute top-4 right-4">
+        <ThemeSwitcher />
+      </div>
+
       <div className="w-full max-w-sm">
         <div className="mb-8 text-center">
           <img src="/favicon.svg" alt="" className="mx-auto size-10" />

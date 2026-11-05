@@ -7,7 +7,13 @@ export {
   formatRate,
   parseApiDate,
 } from './format'
-export { useColorScheme } from './useColorScheme'
+export {
+  setThemePreference,
+  useColorScheme,
+  useThemePreference,
+  type ColorScheme,
+  type ThemePreference,
+} from './theme'
 export { PAGE_SIZES, useListParams } from './useListParams'
 export {
   filterAndSort,
