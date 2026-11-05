@@ -1,10 +1,5 @@
-:root {
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  line-height: 1.5;
-  color-scheme: light dark;
-}
+@import 'tailwindcss';
 
-body {
-  margin: 0;
-  padding: 2rem;
+:root {
+  color-scheme: light dark;
 }

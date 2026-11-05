@@ -1,6 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -14,6 +15,12 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:5173"]
     data_dir: Path = BASE_DIR / "data"
     db_path: Path = BASE_DIR / "data" / "app.db"
+
+    jwt_secret: str = Field(min_length=32, repr=False)
+    jwt_algorithm: str = "HS256"
+    access_token_ttl_minutes: int = 15
+    refresh_token_ttl_days: int = 7
+    cookie_secure: bool = False
 
     @property
     def database_url(self) -> str:
