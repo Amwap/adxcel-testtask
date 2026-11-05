@@ -6,17 +6,35 @@
 Файлы данных `interview.X.csv` и `interview.y.csv` кладутся в `backend/data/` (в git не попадают).
 Бекенд работает с SQLite (`backend/data/app.db`) через SQLAlchemy 2.0.
 
-## Загрузка данных в SQLite
+## Синхронизация данных в SQLite
 
-Скрипт пересоздаёт таблицы `impressions` и `events` и заливает в них CSV (~20 с):
+Скрипт заливает CSV в таблицы `impressions` и `events`. Для каждой таблицы запоминается
+размер и mtime исходного файла (`data_sources`), поэтому повторный запуск перезагружает только
+изменившиеся файлы. `--force` перезаливает всё (нужно и после изменения схемы этих таблиц):
 
 ```bash
-docker compose exec backend python -m scripts.load_data       # из backend/data/
-docker compose exec backend python -m scripts.load_data --x data/interview.X.csv --y data/interview.y.csv
+docker compose exec backend python -m scripts.sync_data
+docker compose exec backend python -m scripts.sync_data --force
+docker compose exec backend python -m scripts.sync_data --x data/interview.X.csv --y data/interview.y.csv
 ```
 
 Особенности данных: `uid` в логе показов не уникален (261 повтор), часть событий
 (~0.8%) ссылается на отсутствующие показы, поэтому в таблицах суррогатный `id`, а `uid` — индекс без FK.
+
+Вместе с показами пересобираются справочники `sites` и `device_models` (уникальные значения
+с числом показов): поиск по подстроке идёт по ним (~11k и ~1.5k строк), а не сканом ~1M показов.
+
+## API данных
+
+Все роуты требуют access-токен.
+
+- `GET /api/summary` — что и когда синхронизировано, число событий по типам
+- `GET /api/impressions?page=&page_size=&q=` — показы с тегами их событий;
+  `q` — префикс uid или подстрока сайта / модели устройства
+- `GET /api/events?page=&page_size=&q=&tag=` — события с сайтом и временем показа;
+  `q` — префикс uid, `tag` — тип события
+
+`page_size` ≤ 100. Ответ: `{items, total, page, page_size}`.
 
 ## Аутентификация
 

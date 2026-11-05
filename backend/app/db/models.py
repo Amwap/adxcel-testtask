@@ -38,7 +38,7 @@ class Impression(Base):
     utmtr: Mapped[int]
     mm_dma: Mapped[int] = mapped_column(index=True)
     os_name: Mapped[str | None] = mapped_column(String)
-    model: Mapped[str | None] = mapped_column(String)
+    model: Mapped[str | None] = mapped_column(String, index=True)
     hardware: Mapped[str | None] = mapped_column(String)
     site_id: Mapped[str] = mapped_column(String, index=True)
 
@@ -55,3 +55,37 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uid: Mapped[str] = mapped_column(String(36), index=True)
     tag: Mapped[str] = mapped_column(String(32))
+
+
+class Site(Base):
+    """Distinct `site_id` values with impression counts, rebuilt on every impressions sync.
+
+    Lets substring search run over ~11k sites instead of scanning ~1M impressions.
+    """
+
+    __tablename__ = "sites"
+
+    site_id: Mapped[str] = mapped_column(String, primary_key=True)
+    impressions: Mapped[int]
+
+
+class DeviceModel(Base):
+    """Distinct device `model` values with impression counts, rebuilt with `Site`."""
+
+    __tablename__ = "device_models"
+
+    model: Mapped[str] = mapped_column(String, primary_key=True)
+    impressions: Mapped[int]
+
+
+class DataSource(Base):
+    """Fingerprint of the CSV a table was last synced from; unchanged files are not reloaded."""
+
+    __tablename__ = "data_sources"
+
+    table: Mapped[str] = mapped_column(String(32), primary_key=True)
+    file_name: Mapped[str] = mapped_column(String)
+    file_size: Mapped[int]
+    file_mtime_ns: Mapped[int]
+    rows: Mapped[int]
+    synced_at: Mapped[datetime] = mapped_column(DateTime)

@@ -1,8 +1,9 @@
 import { useEffect } from 'react'
+import { RouterProvider } from 'react-router'
 import { restoreSession, useSession } from '@/entities/session'
-import { HomePage } from '@/pages/home'
 import { LoginPage } from '@/pages/login'
 import { Spinner } from '@/shared/ui'
+import { router } from './router'
 
 export function App() {
   const session = useSession()
@@ -19,5 +20,5 @@ export function App() {
     )
   }
 
-  return session.status === 'authenticated' ? <HomePage /> : <LoginPage />
+  return session.status === 'authenticated' ? <RouterProvider router={router} /> : <LoginPage />
 }
