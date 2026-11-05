@@ -16,7 +16,8 @@ from app.schemas.data import (
 )
 
 
-def _like_pattern(q: str) -> str:
+def like_pattern(q: str) -> str:
+    """`%q%` with LIKE wildcards escaped by backslash."""
     escaped = q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
     return f"%{escaped}%"
 
@@ -32,7 +33,7 @@ def _impression_search(q: str) -> ColumnElement[bool]:
     Substrings are matched against the small lookup tables, then resolved through indexes,
     so a search never scans the whole impressions table.
     """
-    pattern = _like_pattern(q)
+    pattern = like_pattern(q)
     return or_(
         _starts_with(Impression.uid, q.lower()),
         Impression.site_id.in_(select(Site.site_id).where(Site.site_id.like(pattern, escape="\\"))),

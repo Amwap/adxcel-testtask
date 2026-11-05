@@ -5,9 +5,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.db import SessionLocal, User
 from app.main import app
-from app.services import users
 from app.services.data_sync import sync
 
 X_CSV = """reg_time,uid,fc_imp_chk,fc_time_chk,utmtr,mm_dma,osName,model,hardware,site_id
@@ -39,19 +37,6 @@ def client(csv_files: tuple[Path, Path]) -> Iterator[TestClient]:
         yield c
 
 
-@pytest.fixture(scope="module")
-def headers(client: TestClient) -> Iterator[dict[str, str]]:
-    with SessionLocal() as db:
-        user = users.create_user(db, "data-reader", "data-reader-pass")
-    token = client.post(
-        "/api/auth/login", data={"username": "data-reader", "password": "data-reader-pass"}
-    ).json()["access_token"]
-    yield {"Authorization": f"Bearer {token}"}
-    with SessionLocal() as db:
-        db.delete(db.get(User, user.id))
-        db.commit()
-
-
 def test_sync_skips_unchanged_files(client: TestClient, csv_files: tuple[Path, Path]) -> None:
     assert all(r.skipped for r in sync(*csv_files))
 
@@ -68,14 +53,14 @@ def test_data_requires_auth(client: TestClient) -> None:
         assert client.get(path).status_code == 401
 
 
-def test_summary(client: TestClient, headers: dict[str, str]) -> None:
-    body = client.get("/api/summary", headers=headers).json()
+def test_summary(client: TestClient, auth_headers: dict[str, str]) -> None:
+    body = client.get("/api/summary", headers=auth_headers).json()
     assert {s["table"]: s["rows"] for s in body["sources"]} == {"events": 4, "impressions": 4}
     assert {"tag": "fclick", "count": 2} in body["event_tags"]
 
 
-def test_impressions_pagination(client: TestClient, headers: dict[str, str]) -> None:
-    body = client.get("/api/impressions?page=2&page_size=3", headers=headers).json()
+def test_impressions_pagination(client: TestClient, auth_headers: dict[str, str]) -> None:
+    body = client.get("/api/impressions?page=2&page_size=3", headers=auth_headers).json()
     assert body["total"] == 4
     assert [i["uid"] for i in body["items"]] == ["ccc-1"]
     assert body["items"][0]["os_name"] is None
@@ -92,28 +77,30 @@ def test_impressions_pagination(client: TestClient, headers: dict[str, str]) -> 
     ],
 )
 def test_impressions_search(
-    client: TestClient, headers: dict[str, str], q: str, uids: list[str]
+    client: TestClient, auth_headers: dict[str, str], q: str, uids: list[str]
 ) -> None:
-    body = client.get("/api/impressions", params={"q": q}, headers=headers).json()
+    body = client.get("/api/impressions", params={"q": q}, headers=auth_headers).json()
     assert [i["uid"] for i in body["items"]] == uids
     assert body["total"] == len(uids)
 
 
-def test_impressions_include_events(client: TestClient, headers: dict[str, str]) -> None:
-    items = client.get("/api/impressions", params={"q": "aaa-2"}, headers=headers).json()["items"]
+def test_impressions_include_events(client: TestClient, auth_headers: dict[str, str]) -> None:
+    items = client.get("/api/impressions", params={"q": "aaa-2"}, headers=auth_headers).json()[
+        "items"
+    ]
     assert items[0]["events"] == ["fclick", "registration"]
 
 
-def test_events_filter_and_join(client: TestClient, headers: dict[str, str]) -> None:
-    body = client.get("/api/events", params={"tag": "fclick"}, headers=headers).json()
+def test_events_filter_and_join(client: TestClient, auth_headers: dict[str, str]) -> None:
+    body = client.get("/api/events", params={"tag": "fclick"}, headers=auth_headers).json()
     assert body["total"] == 2
     by_uid = {e["uid"]: e for e in body["items"]}
     assert by_uid["aaa-2"]["site_id"] == "www.forbes.com"
     assert by_uid["zzz-9"]["site_id"] is None  # event without an impression
 
-    body = client.get("/api/events", params={"q": "bbb"}, headers=headers).json()
+    body = client.get("/api/events", params={"q": "bbb"}, headers=auth_headers).json()
     assert [e["tag"] for e in body["items"]] == ["vcontent"]
 
 
-def test_page_size_is_limited(client: TestClient, headers: dict[str, str]) -> None:
-    assert client.get("/api/impressions?page_size=1000", headers=headers).status_code == 422
+def test_page_size_is_limited(client: TestClient, auth_headers: dict[str, str]) -> None:
+    assert client.get("/api/impressions?page_size=1000", headers=auth_headers).status_code == 422

@@ -12,4 +12,20 @@ export {
   type PageQuery,
 } from './data'
 export { getHealth, type Health } from './health'
+export {
+  getAggregates,
+  getEventTypes,
+  getTimeSeries,
+  type AggregateQuery,
+  type AttributionMode,
+  type Dimension,
+  type EventTypes,
+  type Granularity,
+  type MetricPage,
+  type MetricRow,
+  type Metrics,
+  type MetricSortField,
+  type TimePoint,
+  type TimeSeries,
+} from './metrics'
 export { onSessionExpired, refreshAccessToken } from './token'

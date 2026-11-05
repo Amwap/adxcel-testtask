@@ -36,6 +36,25 @@ docker compose exec backend python -m scripts.sync_data --x data/interview.X.csv
 
 `page_size` ≤ 100. Ответ: `{items, total, page, page_size}`.
 
+## Метрики кампании
+
+- **CTR** = 100 · `fclick` / показы, %
+- **EvPM** = 1000 · события типа / показы, ‰; view-through склеивается с базовым типом
+  (`registration` + `vregistration`)
+- События, `uid` которых нет в логе показов, в метрики не попадают
+- `mode` — как считать событие, если у его `uid` несколько показов:
+  `first` — только для самого раннего показа, `all` — для каждого из них
+
+Метрики читаются из предрасчитанных таблиц `rollup_impressions` / `rollup_events`
+(показы и события по часу, `mm_dma`, `site_id` × тип × режим), которые `sync_data`
+пересобирает при любой перезагрузке данных (~30 с). Поэтому графики и агрегаты
+отвечают за миллисекунды и не сканируют миллион показов.
+
+- `GET /api/metrics/event-types` — типы событий (без префикса `v`)
+- `GET /api/metrics/timeseries?tag=&mode=&granularity=hour|day` — ряд CTR / EvPM и итоги
+- `GET /api/metrics/aggregates/{mm_dma|site_id}?tag=&mode=&page=&page_size=&q=&min_impressions=&sort=&order=`
+  — таблица агрегатов с поиском по подстроке, сортировкой и строкой итогов (`totals`)
+
 ## Аутентификация
 
 JWT без регистрации и восстановления пароля — пользователей заводит администратор командой.

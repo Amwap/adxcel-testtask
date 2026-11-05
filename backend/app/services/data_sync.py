@@ -14,7 +14,17 @@ from sqlalchemy import Table, delete, func, insert, select, text
 from sqlalchemy.engine import Connection
 
 from app.config import get_settings
-from app.db import Base, DataSource, DeviceModel, Event, Impression, Site, engine
+from app.db import (
+    Base,
+    DataSource,
+    DeviceModel,
+    Event,
+    EventRollup,
+    Impression,
+    ImpressionRollup,
+    Site,
+    engine,
+)
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +43,14 @@ IMPRESSION_COLUMNS = {
     "site_id": "site_id",
 }
 EVENT_COLUMNS = {"uid": "uid", "tag": "tag"}
+
+# Rollup dimensions: SQL expression over `impressions i` that gives the grouping key
+ROLLUP_DIMENSIONS = {
+    "hour": "strftime(:hour_format, i.reg_time)",
+    "mm_dma": "CAST(i.mm_dma AS TEXT)",
+    "site_id": "i.site_id",
+}
+HOUR_FORMAT = "%Y-%m-%dT%H:00:00"
 
 
 @dataclass(frozen=True)
@@ -74,6 +92,56 @@ def _rebuild_lookups(conn: Connection) -> None:
         )
 
 
+def _rebuild_rollups(conn: Connection) -> None:
+    """Recompute impression and event counts per dimension value (see `EventRollup`)."""
+    tables = [ImpressionRollup.__table__, EventRollup.__table__]
+    Base.metadata.drop_all(conn, tables=tables)
+    Base.metadata.create_all(conn, tables=tables)
+
+    conn.execute(text("DROP TABLE IF EXISTS temp.event_impressions"))
+    # One row per (impression, event type) with the number of such events of its uid;
+    # `is_first` marks the earliest impression of the uid. The inner join drops orphan events.
+    conn.execute(
+        text("""
+            CREATE TEMP TABLE event_impressions AS
+            WITH uid_tags AS (
+                SELECT uid,
+                       CASE WHEN tag LIKE 'v%' THEN substr(tag, 2) ELSE tag END AS tag,
+                       count(*) AS n
+                FROM events
+                GROUP BY 1, 2
+            )
+            SELECT i.id AS impression_id, t.tag, t.n,
+                   i.id = (SELECT min(id) FROM impressions WHERE uid = t.uid) AS is_first
+            FROM uid_tags t
+            JOIN impressions i ON i.uid = t.uid
+        """)
+    )
+    params = {"hour_format": HOUR_FORMAT}
+    for dimension, key in ROLLUP_DIMENSIONS.items():
+        conn.execute(
+            text(f"""
+                INSERT INTO rollup_impressions (dimension, key, impressions)
+                SELECT :dimension, {key}, count(*) FROM impressions i GROUP BY 2
+            """),
+            {**params, "dimension": dimension},
+        )
+        for mode, where in (("all", "1"), ("first", "e.is_first")):
+            conn.execute(
+                text(f"""
+                    INSERT INTO rollup_events (dimension, key, tag, mode, events)
+                    SELECT :dimension, {key}, e.tag, :mode, sum(e.n)
+                    FROM event_impressions e
+                    JOIN impressions i ON i.id = e.impression_id
+                    WHERE {where}
+                    GROUP BY 2, 3
+                """),
+                {**params, "dimension": dimension, "mode": mode},
+            )
+        log.info("rollups: %s", dimension)
+    conn.execute(text("DROP TABLE temp.event_impressions"))
+
+
 def _is_fresh(conn: Connection, table: str, path: Path) -> bool:
     stat = path.stat()
     source = conn.execute(select(DataSource).where(DataSource.table == table)).first()
@@ -107,7 +175,9 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
             raise FileNotFoundError(p)
 
     get_settings().db_path.parent.mkdir(parents=True, exist_ok=True)
-    Base.metadata.create_all(engine, tables=[DataSource.__table__])
+    Base.metadata.create_all(
+        engine, tables=[DataSource.__table__, ImpressionRollup.__table__, EventRollup.__table__]
+    )
 
     plan = [
         (Impression.__table__, x_path, IMPRESSION_COLUMNS, ["reg_time"]),
@@ -131,7 +201,13 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
             _save_source(conn, table.name, path, rows)
             results.append(SyncResult(table.name, rows, skipped=False))
 
-    if not all(r.skipped for r in results):
+        rollups_missing = not conn.scalar(
+            select(func.count()).select_from(ImpressionRollup).limit(1)
+        )
+        if rollups_missing or not all(r.skipped for r in results):
+            _rebuild_rollups(conn)
+
+    if rollups_missing or not all(r.skipped for r in results):
         with engine.connect() as conn:
             conn.execute(text("ANALYZE"))
             conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))

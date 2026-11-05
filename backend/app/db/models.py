@@ -89,3 +89,34 @@ class DataSource(Base):
     file_mtime_ns: Mapped[int]
     rows: Mapped[int]
     synced_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ImpressionRollup(Base):
+    """Impression count per value of a dimension (`hour`, `mm_dma`, `site_id`).
+
+    Rebuilt on every sync, so metric charts and tables never scan the impression log.
+    """
+
+    __tablename__ = "rollup_impressions"
+
+    dimension: Mapped[str] = mapped_column(String(16), primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    impressions: Mapped[int]
+
+
+class EventRollup(Base):
+    """Events attributed to impressions, per dimension value and event type.
+
+    `tag` has the view-through `v` prefix stripped (`vregistration` counts as `registration`).
+    `mode` says how an event is attributed when its uid has several impressions:
+    `first` - to the earliest one only, `all` - to each of them.
+    Events whose uid has no impression are dropped.
+    """
+
+    __tablename__ = "rollup_events"
+
+    dimension: Mapped[str] = mapped_column(String(16), primary_key=True)
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    tag: Mapped[str] = mapped_column(String(32), primary_key=True)
+    mode: Mapped[str] = mapped_column(String(8), primary_key=True)
+    events: Mapped[int]

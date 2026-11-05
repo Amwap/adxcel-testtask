@@ -2,12 +2,22 @@ import { useEffect, useState, type ComponentType } from 'react'
 import { NavLink } from 'react-router'
 import { useSession } from '@/entities/session'
 import { LogoutButton } from '@/features/auth'
-import { CloseIcon, EventsIcon, ImpressionsIcon, MenuIcon, OverviewIcon } from './icons'
+import {
+  AggregatesIcon,
+  CloseIcon,
+  EventsIcon,
+  ImpressionsIcon,
+  MenuIcon,
+  OverviewIcon,
+  TrendsIcon,
+} from './icons'
 
 type NavItem = { to: string; label: string; icon: ComponentType<{ className?: string }> }
 
 const NAV: NavItem[] = [
   { to: '/', label: 'Overview', icon: OverviewIcon },
+  { to: '/trends', label: 'Trends', icon: TrendsIcon },
+  { to: '/aggregates', label: 'Aggregates', icon: AggregatesIcon },
   { to: '/impressions', label: 'Impressions', icon: ImpressionsIcon },
   { to: '/events', label: 'Events', icon: EventsIcon },
 ]

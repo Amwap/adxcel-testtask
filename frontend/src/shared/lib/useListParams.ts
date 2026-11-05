@@ -33,5 +33,6 @@ export function useListParams() {
     setPageSize: (size: number) => update({ size: size === PAGE_SIZES[0] ? null : size }),
     setQuery: (q: string) => update({ q: q.trim() }),
     setFilter: (name: string, value: string) => update({ [name]: value }),
+    setFilters: (changes: Record<string, string | null>) => update(changes),
   }
 }

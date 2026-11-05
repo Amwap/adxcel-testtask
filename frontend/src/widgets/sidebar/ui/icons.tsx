@@ -21,6 +21,17 @@ export const OverviewIcon = (p: IconProps) => (
   <Icon {...p} d="M3.75 13.5h4.5v6.75h-4.5zM9.75 3.75h4.5v16.5h-4.5zM15.75 9h4.5v11.25h-4.5z" />
 )
 
+export const TrendsIcon = (p: IconProps) => (
+  <Icon {...p} d="M2.25 18 9 11.25l4.31 4.31a11.95 11.95 0 0 1 5.81-5.52l2.63-1.17m0 0-5.94-2.28m5.94 2.28-2.28 5.94" />
+)
+
+export const AggregatesIcon = (p: IconProps) => (
+  <Icon
+    {...p}
+    d="M3.38 19.5h17.25M3.38 19.5c-.62 0-1.13-.5-1.13-1.13V5.63c0-.62.5-1.13 1.13-1.13h17.25c.62 0 1.12.5 1.12 1.13v12.74c0 .62-.5 1.13-1.12 1.13M3.38 19.5V9.75m0 0h17.25M3.38 9.75V15m17.25-5.25V15M3.38 15h17.25M12 9.75V19.5"
+  />
+)
+
 export const ImpressionsIcon = (p: IconProps) => (
   <Icon
     {...p}
