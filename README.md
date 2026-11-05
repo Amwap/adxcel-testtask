@@ -21,6 +21,14 @@ python -m scripts.load_data --x path/to/interview.X.csv --y path/to/interview.y.
 Особенности данных: `uid` в логе показов не уникален (261 повтор), часть событий
 (~0.8%) ссылается на отсутствующие показы, поэтому в таблицах суррогатный `id`, а `uid` — индекс без FK.
 
+## Git
+
+После клонирования включите хуки (pre-commit не даёт закоммитить файлы > 50 МБ):
+
+```bash
+git config core.hooksPath .githooks
+```
+
 ## Локальная разработка
 
 Backend:

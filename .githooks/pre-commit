@@ -1,0 +1,14 @@
+#!/bin/sh
+# Reject commits with files GitHub won't accept (hard limit 100 MB, warning at 50 MB).
+limit=$((50 * 1024 * 1024))
+status=0
+
+for file in $(git diff --cached --name-only --diff-filter=AM); do
+  size=$(git cat-file -s ":$file" 2>/dev/null || echo 0)
+  if [ "$size" -gt "$limit" ]; then
+    echo "pre-commit: $file is $((size / 1024 / 1024)) MB (limit 50 MB). Add it to .gitignore." >&2
+    status=1
+  fi
+done
+
+exit $status
