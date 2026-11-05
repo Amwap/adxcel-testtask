@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react'
 import type { FilterSpec, FilterValue, RangeValue } from '@/shared/lib/table'
+import { Combobox } from '../Combobox'
 
 const field =
   'block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm text-slate-900 ring-1 ring-slate-300 ring-inset placeholder:text-slate-400 focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-slate-950 dark:text-white dark:ring-slate-700 dark:[color-scheme:dark] dark:focus:ring-indigo-500'
@@ -100,7 +101,7 @@ function EnumEditor({
 
 function initial(spec: FilterSpec, value: FilterValue | undefined): FilterValue {
   if (value !== undefined) return value
-  if (spec.type === 'enum') return []
+  if (spec.type === 'enum' || spec.type === 'lookup') return []
   if (spec.type === 'number' || spec.type === 'datetime') return { min: '', max: '' }
   return ''
 }
@@ -126,6 +127,19 @@ export function FilterEditor({
     <form onSubmit={submit}>
       {spec.type === 'enum' ? (
         <EnumEditor options={spec.options} value={draft as string[]} onChange={setDraft} />
+      ) : spec.type === 'lookup' ? (
+        <Combobox
+          label="Filter values"
+          multiple
+          inline
+          autoFocus
+          className="w-72"
+          search={spec.search}
+          labelOf={spec.labelOf}
+          placeholder={spec.placeholder ?? 'Search…'}
+          value={draft as string[]}
+          onChange={setDraft}
+        />
       ) : spec.type === 'number' || spec.type === 'datetime' ? (
         <RangeEditor type={spec.type} value={draft as RangeValue} onChange={setDraft} />
       ) : (

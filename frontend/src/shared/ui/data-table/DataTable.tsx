@@ -308,7 +308,7 @@ export function DataTable<T>({
                       endDrag()
                     }}
                   >
-                    <div className={`flex items-center gap-1 py-1.5 pr-2 pl-3 ${isRight(c) ? 'justify-end' : ''}`}>
+                    <div className={`flex items-center gap-1 py-1.5 pr-2 pl-3 ${isRight(c) ? 'justify-end' : 'justify-between'}`}>
                       <div
                         draggable
                         title={c.hint ? `${c.hint}. Drag to move the column.` : 'Drag to move the column'}

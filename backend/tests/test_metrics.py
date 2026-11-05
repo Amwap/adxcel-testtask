@@ -105,6 +105,44 @@ def test_timeseries_rejects_too_many_tags(client: TestClient, auth_headers: dict
     assert res.status_code == 422
 
 
+@pytest.mark.parametrize(("mode", "clicks"), [("first", [0, 0]), ("all", [1, 0])])
+def test_timeseries_of_one_dma(
+    client: TestClient, auth_headers: dict, mode: str, clicks: list[int]
+) -> None:
+    # DMA 600 has the second impression of "b" and the impression of "c"
+    body = get(client, auth_headers, "/timeseries", mode=mode, mm_dma=600)
+    assert [(p["ts"], p["impressions"]) for p in body["points"]] == [
+        ("2021-07-21T11:00:00", 1),
+        ("2021-07-22T09:00:00", 1),
+    ]
+    assert [p["clicks"] for p in body["points"]] == clicks
+    assert body["totals"]["impressions"] == 2
+
+
+def test_timeseries_of_one_site(client: TestClient, auth_headers: dict) -> None:
+    body = get(client, auth_headers, "/timeseries", tag="registration", site_id="s2.com")
+    assert [(p["ts"], p["impressions"], p["clicks"]) for p in body["points"]] == [
+        ("2021-07-21T10:00:00", 1, 1),
+        ("2021-07-21T11:00:00", 1, 0),
+    ]
+    assert body["totals"]["events"] == {"registration": 1}
+
+    daily = get(client, auth_headers, "/timeseries", site_id="s1.com", granularity="day")
+    assert [(p["ts"], p["impressions"]) for p in daily["points"]] == [
+        ("2021-07-21T00:00:00", 1),
+        ("2021-07-22T00:00:00", 1),
+    ]
+
+
+def test_timeseries_segment_errors(client: TestClient, auth_headers: dict) -> None:
+    # An unknown segment is an empty series, like a filter that matches nothing
+    assert get(client, auth_headers, "/timeseries", site_id="nope.com")["points"] == []
+    res = client.get(
+        "/api/metrics/timeseries", params={"mm_dma": 500, "site_id": "s1.com"}, headers=auth_headers
+    )
+    assert res.status_code == 422
+
+
 def test_aggregate_by_dma(client: TestClient, auth_headers: dict) -> None:
     body = get(client, auth_headers, "/aggregates/mm_dma", mode="all", sort="key", order="asc")
     assert [(r["key"], r["impressions"], r["clicks"], r["ctr"]) for r in body["items"]] == [
@@ -113,6 +151,7 @@ def test_aggregate_by_dma(client: TestClient, auth_headers: dict) -> None:
     ]
     assert body["total"] == 2
     assert body["totals"]["clicks"] == 3
+    assert [r["name"] for r in body["items"]] == ["Portland-Auburn, ME", "Corpus Christi, TX"]
 
 
 def test_aggregate_sort_search_and_paging(client: TestClient, auth_headers: dict) -> None:
@@ -140,7 +179,7 @@ def test_aggregate_sort_search_and_paging(client: TestClient, auth_headers: dict
     )
     assert [r["key"] for r in body["items"]] == ["s1.com"]
 
-    body = get(client, auth_headers, "/aggregates/site_id", key="S1")
+    body = get(client, auth_headers, "/aggregates/site_id", key="s1.com")
     assert [r["key"] for r in body["items"]] == ["s1.com"]
     assert body["totals"]["impressions"] == 2
 
@@ -154,16 +193,61 @@ def test_aggregate_column_filters(client: TestClient, auth_headers: dict) -> Non
     assert [r["key"] for r in body["items"]] == ["600"]
     assert body["totals"]["clicks"] == 1
 
-    body = get(client, auth_headers, "/aggregates/mm_dma", key_min=550)
-    assert [r["key"] for r in body["items"]] == ["600"]
-
+    # DMAs sort by the code, numerically
     body = get(client, auth_headers, "/aggregates/mm_dma", sort="key", order="desc")
     assert [r["key"] for r in body["items"]] == ["600", "500"]
 
-    res = client.get(
-        "/api/metrics/aggregates/mm_dma", params={"key_min": "x"}, headers=auth_headers
-    )
-    assert res.status_code == 422
+
+@pytest.mark.parametrize(
+    ("params", "keys"),
+    [
+        ({"key": "600"}, ["600"]),
+        ({"key": ["500", "600"]}, ["500", "600"]),  # impressions tie, then by key
+        ({"key": "60"}, []),  # exact values only
+        ({"name": "christi"}, ["600"]),
+        ({"sort": "name", "order": "desc"}, ["500", "600"]),
+    ],
+)
+def test_aggregate_dma_filters(
+    client: TestClient, auth_headers: dict, params: dict, keys: list[str]
+) -> None:
+    body = get(client, auth_headers, "/aggregates/mm_dma", **params)
+    assert [r["key"] for r in body["items"]] == keys
+
+
+@pytest.mark.parametrize(
+    ("path", "params", "keys"),
+    [
+        ("/segments/mm_dma", {}, ["500", "600"]),
+        ("/segments/mm_dma", {"q": "6"}, ["600"]),  # code prefix
+        ("/segments/mm_dma", {"q": "00"}, []),  # not the middle of a code
+        ("/segments/mm_dma", {"q": "PORTLAND"}, ["500"]),  # part of the name, any case
+        ("/segments/mm_dma", {"q": "christi"}, ["600"]),
+        ("/segments/site_id", {"q": "1.co"}, ["s1.com"]),  # part of the domain
+        ("/segments/site_id", {"q": "%"}, []),  # LIKE wildcards are literal
+        ("/segments/site_id", {"limit": 1}, ["s1.com"]),
+        ("/segments/site_id", {"min_impressions": 3}, []),
+    ],
+)
+def test_segment_options(
+    client: TestClient, auth_headers: dict, path: str, params: dict, keys: list[str]
+) -> None:
+    options = client.get(f"/api/metrics{path}", params=params, headers=auth_headers).json()
+    assert [o["key"] for o in options] == keys
+
+
+def test_segment_options_carry_dma_names(client: TestClient, auth_headers: dict) -> None:
+    options = get(client, auth_headers, "/segments/mm_dma", q="500")
+    assert options == [{"key": "500", "name": "Portland-Auburn, ME", "impressions": 2}]
+    assert get(client, auth_headers, "/segments/site_id", q="s2")[0]["name"] is None
+
+
+def test_dma_regions(client: TestClient, auth_headers: dict) -> None:
+    res = client.get("/api/metrics/dma-regions", headers=auth_headers)
+    regions = {r["code"]: r["name"] for r in res.json()}
+    assert len(regions) == 211  # 210 Nielsen DMAs and 0
+    assert regions[0] == "Unknown"
+    assert regions[501] == "New York, NY"
 
 
 def test_aggregate_rejects_unknown_dimension(client: TestClient, auth_headers: dict) -> None:

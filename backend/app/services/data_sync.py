@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Table, delete, func, insert, literal, select, text, update
+from sqlalchemy import Table, delete, func, insert, inspect, literal, select, text, update
 from sqlalchemy.engine import Connection
 
 from app.config import get_settings
@@ -45,11 +45,17 @@ IMPRESSION_COLUMNS = {
 }
 EVENT_COLUMNS = {"uid": "uid", "tag": "tag"}
 
-# Rollup dimensions: SQL expression over `impressions i` that gives the grouping key
+# Rollup dimensions: SQL expressions over `impressions i` that give the segment and the key
+_HOUR = "strftime(:hour_format, i.reg_time)"
+_DMA = "CAST(i.mm_dma AS TEXT)"
+_SITE = "i.site_id"
 ROLLUP_DIMENSIONS = {
-    "hour": "strftime(:hour_format, i.reg_time)",
-    "mm_dma": "CAST(i.mm_dma AS TEXT)",
-    "site_id": "i.site_id",
+    "hour": ("''", _HOUR),
+    "mm_dma": ("''", _DMA),
+    "site_id": ("''", _SITE),
+    # Hourly series of each DMA and site, for trends of one segment
+    "hour:mm_dma": (_DMA, _HOUR),
+    "hour:site_id": (_SITE, _HOUR),
 }
 HOUR_FORMAT = "%Y-%m-%dT%H:00:00"
 
@@ -107,7 +113,7 @@ def _rebuild_lookups(conn: Connection) -> None:
 
 
 def _link_events(conn: Connection) -> None:
-    """Fill `Impression.event_count` and `Event.impression_id` across the two logs."""
+    """Fill `Impression.event_count` and the impression columns of `Event` across the logs."""
     conn.execute(update(Impression).where(Impression.event_count > 0).values(event_count=0))
     conn.execute(
         text("""
@@ -116,10 +122,13 @@ def _link_events(conn: Connection) -> None:
             WHERE uid IN (SELECT uid FROM events)
         """)
     )
+    conn.execute(update(Event).values(reg_time=None, site_id=None))
     conn.execute(
         text("""
             UPDATE events
-            SET impression_id = (SELECT min(id) FROM impressions i WHERE i.uid = events.uid)
+            SET reg_time = i.reg_time, site_id = i.site_id
+            FROM impressions i
+            WHERE i.id = (SELECT min(id) FROM impressions WHERE uid = events.uid)
         """)
     )
 
@@ -150,23 +159,23 @@ def _rebuild_rollups(conn: Connection) -> None:
         """)
     )
     params = {"hour_format": HOUR_FORMAT}
-    for dimension, key in ROLLUP_DIMENSIONS.items():
+    for dimension, (segment, key) in ROLLUP_DIMENSIONS.items():
         conn.execute(
             text(f"""
-                INSERT INTO rollup_impressions (dimension, key, impressions)
-                SELECT :dimension, {key}, count(*) FROM impressions i GROUP BY 2
+                INSERT INTO rollup_impressions (dimension, segment, key, impressions)
+                SELECT :dimension, {segment}, {key}, count(*) FROM impressions i GROUP BY 2, 3
             """),
             {**params, "dimension": dimension},
         )
         for mode, where in (("all", "1"), ("first", "e.is_first")):
             conn.execute(
                 text(f"""
-                    INSERT INTO rollup_events (dimension, key, tag, mode, events)
-                    SELECT :dimension, {key}, e.tag, :mode, sum(e.n)
+                    INSERT INTO rollup_events (dimension, segment, key, tag, mode, events)
+                    SELECT :dimension, {segment}, {key}, e.tag, :mode, sum(e.n)
                     FROM event_impressions e
                     JOIN impressions i ON i.id = e.impression_id
                     WHERE {where}
-                    GROUP BY 2, 3
+                    GROUP BY 2, 3, 4
                 """),
                 {**params, "dimension": dimension, "mode": mode},
             )
@@ -174,11 +183,14 @@ def _rebuild_rollups(conn: Connection) -> None:
     conn.execute(text("DROP TABLE temp.event_impressions"))
 
 
-def _is_fresh(conn: Connection, table: str, path: Path) -> bool:
+def _is_fresh(conn: Connection, table: Table, path: Path) -> bool:
+    """Loaded from this very file, with the current set of columns."""
     stat = path.stat()
-    source = conn.execute(select(DataSource).where(DataSource.table == table)).first()
+    source = conn.execute(select(DataSource).where(DataSource.table == table.name)).first()
+    stored = {c["name"] for c in inspect(conn).get_columns(table.name)}
     return (
         source is not None
+        and stored == set(table.columns.keys())
         and source.file_name == path.name
         and source.file_size == stat.st_size
         and source.file_mtime_ns == stat.st_mtime_ns
@@ -219,7 +231,7 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
     with engine.begin() as conn:
         conn.execute(text("PRAGMA synchronous=OFF"))
         for table, path, columns, parse_dates in plan:
-            if not force and _is_fresh(conn, table.name, path):
+            if not force and _is_fresh(conn, table, path):
                 rows = conn.scalar(select(DataSource.rows).where(DataSource.table == table.name))
                 results.append(SyncResult(table.name, rows or 0, skipped=True))
                 continue
@@ -236,8 +248,11 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
             _save_source(conn, table.name, path, rows)
             results.append(SyncResult(table.name, rows, skipped=False))
 
-        rollups_missing = not conn.scalar(
-            select(func.count()).select_from(ImpressionRollup).limit(1)
+        # Rollups are derived data: an older schema is rebuilt without reloading the CSVs
+        rollup = ImpressionRollup.__table__
+        stored = {c["name"] for c in inspect(conn).get_columns(rollup.name)}
+        rollups_missing = stored != set(rollup.columns.keys()) or not conn.scalar(
+            select(func.count()).select_from(rollup).limit(1)
         )
         if rollups_missing or not all(r.skipped for r in results):
             _link_events(conn)

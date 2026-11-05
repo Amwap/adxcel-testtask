@@ -2,23 +2,26 @@
 
 from collections import defaultdict
 
-from sqlalchemy import Integer, and_, cast, column, func, select
+from sqlalchemy import Integer, String, and_, cast, column, func, null, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db import EventRollup, ImpressionRollup
 from app.schemas.metrics import (
     Dimension,
+    DmaRegion,
     EventTypes,
     Granularity,
     MetricPage,
     MetricRow,
     Metrics,
     Mode,
+    SegmentOption,
     SeriesMetrics,
     TimePoint,
     TimeSeries,
 )
-from app.services.table import Field, TableQuery
+from app.services import dma
+from app.services.table import Field, TableQuery, like_pattern
 
 CLICK_TAG = "fclick"
 
@@ -27,10 +30,16 @@ _METRIC_FIELDS = {
     name: Field("number", column(name))
     for name in ("impressions", "clicks", "events", "ctr", "evpm")
 }
+
+# `key` filters take exact values, picked from `segment_options`
 AGGREGATE_FIELDS: dict[Dimension, dict[str, Field]] = {
-    # DMA codes are numbers stored as text keys
-    "mm_dma": {"key": Field("number", cast(column("key"), Integer)), **_METRIC_FIELDS},
-    "site_id": {"key": Field("text", column("key")), **_METRIC_FIELDS},
+    # DMA codes are stored as text keys; shown as "(code) name", so sorted by the code
+    "mm_dma": {
+        "key": Field("enum", column("key"), sort_by=cast(column("key"), Integer)),
+        "name": Field("text", column("name")),
+        **_METRIC_FIELDS,
+    },
+    "site_id": {"key": Field("enum", column("key")), **_METRIC_FIELDS},
 }
 
 
@@ -45,14 +54,19 @@ def _metrics(impressions: int, clicks: int, events: int) -> dict[str, int | floa
 
 
 def _rollup_query(dimension: str, tag: str, mode: Mode):
-    """Rows of (key, impressions, clicks, events, ctr, evpm) for every value of `dimension`."""
+    """Rows of (key, name, impressions, clicks, events, ctr, evpm) for every value of `dimension`.
+
+    `name` is the DMA name, NULL for sites.
+    """
     imp = ImpressionRollup
+    names = dma.table()
     clicks = aliased(EventRollup)
     events = aliased(EventRollup)
 
     def matches(rollup, event_tag: str):
         return and_(
             rollup.dimension == imp.dimension,
+            rollup.segment == imp.segment,
             rollup.key == imp.key,
             rollup.tag == event_tag,
             rollup.mode == mode,
@@ -60,9 +74,11 @@ def _rollup_query(dimension: str, tag: str, mode: Mode):
 
     n_clicks = func.coalesce(clicks.events, 0)
     n_events = func.coalesce(events.events, 0)
-    return (
+    name = names.c.name if dimension == "mm_dma" else cast(null(), String)
+    stmt = (
         select(
             imp.key,
+            name.label("name"),
             imp.impressions,
             n_clicks.label("clicks"),
             n_events.label("events"),
@@ -72,8 +88,11 @@ def _rollup_query(dimension: str, tag: str, mode: Mode):
         .select_from(imp)
         .outerjoin(clicks, matches(clicks, CLICK_TAG))
         .outerjoin(events, matches(events, tag))
-        .where(imp.dimension == dimension)
+        .where(imp.dimension == dimension, imp.segment == "")
     )
+    if dimension == "mm_dma":
+        stmt = stmt.outerjoin(names, names.c.code == cast(imp.key, Integer))
+    return stmt
 
 
 def _totals(db: Session, stmt) -> Metrics:
@@ -86,6 +105,34 @@ def _totals(db: Session, stmt) -> Metrics:
         )
     ).one()
     return Metrics(**_metrics(*row))
+
+
+def dma_regions() -> list[DmaRegion]:
+    return [DmaRegion(code=code, name=name) for code, name in dma.names().items()]
+
+
+def segment_options(
+    db: Session, dimension: Dimension, q: str, *, limit: int, min_impressions: int = 0
+) -> list[SegmentOption]:
+    """DMAs or sites matching `q`, by impressions descending, for searchable pickers.
+
+    A site matches by a part of its domain, a DMA by a part of its name or a code prefix.
+    """
+    imp = ImpressionRollup
+    stmt = select(imp.key, imp.impressions).where(
+        imp.dimension == dimension, imp.segment == "", imp.impressions >= min_impressions
+    )
+    q = q.strip()
+    if q and dimension == "mm_dma":
+        stmt = stmt.where(imp.key.in_([str(code) for code in dma.search(q)]))
+    elif q:
+        stmt = stmt.where(imp.key.like(like_pattern(q), escape="\\"))
+    rows = db.execute(stmt.order_by(imp.impressions.desc(), imp.key).limit(limit))
+    names = dma.names() if dimension == "mm_dma" else {}
+    return [
+        SegmentOption(key=key, name=names.get(int(key)) if names else None, impressions=n)
+        for key, n in rows
+    ]
 
 
 def event_types(db: Session) -> EventTypes:
@@ -105,8 +152,18 @@ def _series_metrics(impressions: int, events: dict[str, int], tags: list[str]) -
     }
 
 
-def timeseries(db: Session, tags: list[str], mode: Mode, granularity: Granularity) -> TimeSeries:
-    """CTR and EvPM of each of `tags` per hour or day, in one pass over the hourly rollups."""
+def timeseries(
+    db: Session,
+    tags: list[str],
+    mode: Mode,
+    granularity: Granularity,
+    segment: tuple[Dimension, str] | None = None,
+) -> TimeSeries:
+    """CTR and EvPM of each of `tags` per hour or day, in one pass over the hourly rollups.
+
+    `segment` narrows the series to one DMA or site, e.g. `("mm_dma", "501")`.
+    """
+    dimension, segment_key = ("hour", "") if segment is None else (f"hour:{segment[0]}", segment[1])
 
     def bucket(key: str) -> str:
         return key if granularity == "hour" else f"{key[:10]}T00:00:00"
@@ -114,7 +171,7 @@ def timeseries(db: Session, tags: list[str], mode: Mode, granularity: Granularit
     impressions: dict[str, int] = defaultdict(int)
     for k, n in db.execute(
         select(ImpressionRollup.key, ImpressionRollup.impressions)
-        .where(ImpressionRollup.dimension == "hour")
+        .where(ImpressionRollup.dimension == dimension, ImpressionRollup.segment == segment_key)
         .order_by(ImpressionRollup.key)
     ):
         impressions[bucket(k)] += n
@@ -123,7 +180,8 @@ def timeseries(db: Session, tags: list[str], mode: Mode, granularity: Granularit
     totals: dict[str, int] = defaultdict(int)
     for k, tag, n in db.execute(
         select(EventRollup.key, EventRollup.tag, EventRollup.events).where(
-            EventRollup.dimension == "hour",
+            EventRollup.dimension == dimension,
+            EventRollup.segment == segment_key,
             EventRollup.mode == mode,
             EventRollup.tag.in_({CLICK_TAG, *tags}),
         )
@@ -164,5 +222,8 @@ def aggregate(
     rows = db.execute(
         stmt.order_by(*order_by, column("key")).offset((page - 1) * page_size).limit(page_size)
     )
-    items = [MetricRow(key=r.key, **_metrics(r.impressions, r.clicks, r.events)) for r in rows]
+    items = [
+        MetricRow(key=r.key, name=r.name, **_metrics(r.impressions, r.clicks, r.events))
+        for r in rows
+    ]
     return MetricPage(items=items, total=total, page=page, page_size=page_size, totals=totals)

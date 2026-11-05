@@ -5,10 +5,12 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from app.api.deps import CurrentUser, DbSession, table_query
 from app.schemas.metrics import (
     Dimension,
+    DmaRegion,
     EventTypes,
     Granularity,
     MetricPage,
     Mode,
+    SegmentOption,
     TimeSeries,
 )
 from app.services import metrics
@@ -20,6 +22,28 @@ ModeParam = Annotated[
     Mode,
     Query(description="Duplicate uids: attribute events to the `first` impression or to `all`"),
 ]
+
+
+@router.get("/dma-regions")
+def dma_regions(_user: CurrentUser) -> list[DmaRegion]:
+    """Nielsen DMA names by code; code 0 is an unknown region."""
+    return metrics.dma_regions()
+
+
+@router.get("/segments/{dimension}")
+def segments(
+    dimension: Dimension,
+    db: DbSession,
+    _user: CurrentUser,
+    q: Annotated[str, Query(max_length=100)] = "",
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    min_impressions: Annotated[int, Query(ge=0)] = 0,
+) -> list[SegmentOption]:
+    """Options of DMA and site pickers, by impressions descending.
+
+    `q` matches a part of the site domain, or a part of the DMA name or a DMA code prefix.
+    """
+    return metrics.segment_options(db, dimension, q, limit=limit, min_impressions=min_impressions)
 
 
 @router.get("/event-types")
@@ -37,12 +61,25 @@ def timeseries(
     ] = None,
     mode: ModeParam = "first",
     granularity: Granularity = "hour",
+    mm_dma: Annotated[int | None, Query(description="Only impressions of this DMA")] = None,
+    site_id: Annotated[
+        str | None, Query(max_length=256, description="Only impressions of this site")
+    ] = None,
 ) -> TimeSeries:
-    """CTR (by fclick) and EvPM of each `tag` per hour or day."""
+    """CTR (by fclick) and EvPM of each `tag` per hour or day, campaign-wide or for one segment."""
     tags = list(dict.fromkeys(t.strip() for t in tag or [metrics.CLICK_TAG] if t.strip()))
     if any(len(t) > 32 for t in tags):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Event type is too long")
-    return metrics.timeseries(db, tags, mode, granularity)
+    if mm_dma is not None and site_id is not None:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Filter by either mm_dma or site_id, not both"
+        )
+    segment: tuple[Dimension, str] | None = None
+    if mm_dma is not None:
+        segment = ("mm_dma", str(mm_dma))
+    elif site_id is not None:
+        segment = ("site_id", site_id)
+    return metrics.timeseries(db, tags, mode, granularity, segment)
 
 
 @router.get("/aggregates/{dimension}")
@@ -59,7 +96,9 @@ def aggregates(
     """Impressions, CTR and EvPM per `mm_dma` or `site_id`, by impressions descending.
 
     Filter and sort by any column (see `app.services.table` for the parameters):
-    `key` (number for DMA, text for site), `impressions`, `clicks`, `events`, `ctr`, `evpm`.
+    `key`, `impressions`, `clicks`, `events`, `ctr`, `evpm`; for DMAs also `name`.
+    `key` takes exact values, repeatable (`key=501&key=524`), as picked from `/segments`;
+    `sort=key` orders DMAs by name.
     """
     query = table_query(request, metrics.AGGREGATE_FIELDS[dimension])
     return metrics.aggregate(db, dimension, tag, mode, query, page=page, page_size=page_size)

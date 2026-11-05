@@ -5,7 +5,7 @@ from collections import defaultdict
 from sqlalchemy import ColumnElement, and_, func, select
 from sqlalchemy.orm import Session
 
-from app.db import DataSource, DeviceModel, Event, Impression, ImpressionFacet, Site
+from app.db import DataSource, DeviceModel, Event, Impression, ImpressionFacet
 from app.schemas.data import (
     DatasetSummary,
     DataSourceRead,
@@ -35,10 +35,9 @@ def _via_lookup(column, lookup_column):
 IMPRESSION_FIELDS: dict[str, Field] = {
     "reg_time": Field("datetime", Impression.reg_time),
     "uid": Field("prefix", Impression.uid, where=lambda q: _starts_with(Impression.uid, q)),
-    "site_id": Field(
-        "text", Impression.site_id, where=_via_lookup(Impression.site_id, Site.site_id)
-    ),
-    "mm_dma": Field("number", Impression.mm_dma),
+    # Exact values, picked from `/metrics/segments`
+    "site_id": Field("enum", Impression.site_id),
+    "mm_dma": Field("enum", Impression.mm_dma, cast=int),
     "model": Field(
         "text", Impression.model, where=_via_lookup(Impression.model, DeviceModel.model)
     ),
@@ -59,8 +58,8 @@ IMPRESSION_FIELDS: dict[str, Field] = {
 EVENT_FIELDS: dict[str, Field] = {
     "tag": Field("enum", Event.tag),
     "uid": Field("prefix", Event.uid, where=lambda q: _starts_with(Event.uid, q)),
-    "reg_time": Field("datetime", Impression.reg_time),
-    "site_id": Field("text", Impression.site_id),
+    "reg_time": Field("datetime", Event.reg_time),
+    "site_id": Field("enum", Event.site_id),
 }
 
 
@@ -97,13 +96,9 @@ def list_impressions(
 
 
 def list_events(db: Session, page: int, page_size: int, query: TableQuery) -> Page[EventRead]:
-    stmt = (
-        select(Event.id, Event.uid, Event.tag, Impression.reg_time, Impression.site_id)
-        .outerjoin(Impression, Impression.id == Event.impression_id)
-        .where(*query.conditions)
-    )
+    stmt = select(Event).where(*query.conditions)
     total = db.scalar(select(func.count()).select_from(stmt.subquery())) or 0
-    rows = db.execute(
+    rows = db.scalars(
         stmt.order_by(*query.order_by, Event.id).offset((page - 1) * page_size).limit(page_size)
     )
     items = [EventRead.model_validate(r, from_attributes=True) for r in rows]

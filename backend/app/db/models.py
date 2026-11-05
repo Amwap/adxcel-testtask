@@ -58,8 +58,10 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uid: Mapped[str] = mapped_column(String(36), index=True)
     tag: Mapped[str] = mapped_column(String(32))
-    # Earliest impression with this uid, filled on sync; None when there is none
-    impression_id: Mapped[int | None] = mapped_column(index=True)
+    # Copied from the earliest impression with this uid on sync, so listing events needs no
+    # join with the impression log; None when there is none
+    reg_time: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    site_id: Mapped[str | None] = mapped_column(String, index=True)
 
 
 class Site(Base):
@@ -111,12 +113,15 @@ class DataSource(Base):
 class ImpressionRollup(Base):
     """Impression count per value of a dimension (`hour`, `mm_dma`, `site_id`).
 
+    `hour:mm_dma` and `hour:site_id` are hourly series of the single DMA or site in `segment`;
+    campaign-wide dimensions have an empty `segment`.
     Rebuilt on every sync, so metric charts and tables never scan the impression log.
     """
 
     __tablename__ = "rollup_impressions"
 
     dimension: Mapped[str] = mapped_column(String(16), primary_key=True)
+    segment: Mapped[str] = mapped_column(String, primary_key=True)
     key: Mapped[str] = mapped_column(String, primary_key=True)
     impressions: Mapped[int]
 
@@ -133,6 +138,7 @@ class EventRollup(Base):
     __tablename__ = "rollup_events"
 
     dimension: Mapped[str] = mapped_column(String(16), primary_key=True)
+    segment: Mapped[str] = mapped_column(String, primary_key=True)
     key: Mapped[str] = mapped_column(String, primary_key=True)
     tag: Mapped[str] = mapped_column(String(32), primary_key=True)
     mode: Mapped[str] = mapped_column(String(8), primary_key=True)

@@ -1,4 +1,6 @@
+import { DmaLabel, useDmaNames, type DmaNames } from '@/entities/dma'
 import { EventTag } from '@/entities/event'
+import { segmentFilter } from '@/features/metric-filters'
 import { getImpressions, getSummary, type Impression } from '@/shared/api'
 import { formatDateTime, PAGE_SIZES, useListParams, useRequest, useTableState } from '@/shared/lib'
 import { Card, DataTable, PageHeader, PageSizeSelect, Pagination, type Column } from '@/shared/ui'
@@ -16,7 +18,12 @@ const unknown = <span className={muted}>Unknown</span>
 
 type Options = { value: string; label: string }[]
 
-const columnsFor = (os: Options, hardware: Options, tags: Options): Column<Impression>[] => [
+const columnsFor = (
+  os: Options,
+  hardware: Options,
+  tags: Options,
+  dmaNames: DmaNames | undefined,
+): Column<Impression>[] => [
   {
     key: 'reg_time',
     header: 'Time',
@@ -32,14 +39,20 @@ const columnsFor = (os: Options, hardware: Options, tags: Options): Column<Impre
     filter: { type: 'prefix' },
     cell: (r) => <span className="font-mono text-xs">{r.uid}</span>,
   },
-  { key: 'site_id', header: 'Site', width: 200, filter: { type: 'text' }, cell: (r) => r.site_id },
+  {
+    key: 'site_id',
+    header: 'Site',
+    width: 200,
+    filter: segmentFilter('site_id'),
+    cell: (r) => r.site_id,
+  },
   {
     key: 'mm_dma',
     header: 'DMA',
-    width: 96,
-    filter: { type: 'number' },
-    cell: (r) => r.mm_dma,
-    className: 'text-right tabular-nums',
+    hint: '(Code) region',
+    width: 300,
+    filter: segmentFilter('mm_dma', dmaNames),
+    cell: (r) => <DmaLabel code={r.mm_dma} name={dmaNames?.get(r.mm_dma)} />,
   },
   {
     key: 'model',
@@ -113,10 +126,12 @@ export function ImpressionsPage() {
   const { page, pageSize } = list
   const summary = useRequest('summary', getSummary)
   const facets = summary.data?.impression_facets
+  const dmaNames = useDmaNames()
   const columns = columnsFor(
     toOptions(facets?.os_name),
     toOptions(facets?.hardware),
     (summary.data?.event_tags ?? []).map(({ tag }) => ({ value: tag, label: tag })),
+    dmaNames,
   )
   const table = useTableState(columns)
 

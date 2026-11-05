@@ -2,7 +2,8 @@ import type { SelectHTMLAttributes } from 'react'
 
 type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   label: string
-  options: { value: string; label: string }[]
+  /** `title` is shown on hover, e.g. the full text of a shortened label. */
+  options: { value: string; label: string; title?: string }[]
 }
 
 export function Select({ label, options, className = '', ...props }: SelectProps) {
@@ -13,7 +14,7 @@ export function Select({ label, options, className = '', ...props }: SelectProps
       {...props}
     >
       {options.map((o) => (
-        <option key={o.value} value={o.value}>
+        <option key={o.value} value={o.value} title={o.title}>
           {o.label}
         </option>
       ))}

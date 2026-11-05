@@ -1,5 +1,6 @@
 import { useMemo, type ReactNode } from 'react'
-import { ModeSwitch, useMetricParams } from '@/features/metric-filters'
+import { useDmaNames } from '@/entities/dma'
+import { ModeSwitch, SegmentPicker, segmentLabel, useMetricParams } from '@/features/metric-filters'
 import { getEventTypes, getTimeSeries } from '@/shared/api'
 import {
   filterAndSort,
@@ -134,7 +135,9 @@ function TagToggle({
 
 export function TrendsPage() {
   const params = useMetricParams()
-  const { mode } = params
+  const { mode, segment } = params
+  const dmaNames = useDmaNames()
+  const segmentName = segment?.dimension === 'mm_dma' ? dmaNames?.get(Number(segment.key)) : undefined
   const theme = useChartTheme()
 
   const resParam = params.get('res') as Resolution
@@ -144,10 +147,11 @@ export function TrendsPage() {
   const showPeaks = params.get('peaks') !== 'cap'
 
   // Every event type comes in one request, so toggling lines never waits on the network
-  const { data, error, loading } = useRequest(mode, async (signal) => {
+  const requestKey = [mode, segment?.dimension, segment?.key].join('|')
+  const { data, error, loading } = useRequest(requestKey, async (signal) => {
     const types = await getEventTypes(signal)
     const tags = types.tags.filter((t) => t !== types.click_tag)
-    const series = await getTimeSeries({ tags, mode, granularity: 'hour' }, signal)
+    const series = await getTimeSeries({ tags, mode, granularity: 'hour', segment }, signal)
     return { clickTag: types.click_tag, tags, series }
   })
 
@@ -259,12 +263,15 @@ export function TrendsPage() {
     <>
       <PageHeader
         title="Trends"
-        description="Campaign CTR and EvPM over time. Events without a matching impression are excluded."
+        description={`${segment ? `${segmentLabel(segment, segmentName)}: CTR` : 'Campaign CTR'} and EvPM over time. Events without a matching impression are excluded.`}
       />
 
       <Card className="mb-6 flex flex-col gap-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <ModeSwitch mode={mode} onChange={params.setMode} />
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
+            <SegmentPicker segment={segment} onChange={params.setSegment} />
+            <ModeSwitch mode={mode} onChange={params.setMode} />
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
               <span>Peaks</span>

@@ -1,16 +1,25 @@
 import { useSearchParams } from 'react-router'
+import type { ComboOption, ComboSearch } from '@/shared/ui/Combobox'
 
 /**
  * Column filter kinds; each maps to the query parameters the API takes for it
  * (see backend `app/services/table.py`), and the page URL uses the same names:
  * text/prefix `key=…`, number `key_min`/`key_max`, datetime `key_from`/`key_to`,
- * enum a repeated `key=…`.
+ * enum and lookup a repeated `key=…`.
  */
 export type FilterSpec =
   | { type: 'text' | 'prefix'; placeholder?: string }
   | { type: 'number' }
   | { type: 'datetime' }
   | { type: 'enum'; options: { value: string; label: string }[] }
+  /** Exact values picked from a searchable list too long to show at once (DMAs, sites). */
+  | {
+      type: 'lookup'
+      search: ComboSearch
+      /** Label of a value picked earlier, e.g. read from the URL. */
+      labelOf?: (value: string) => Pick<ComboOption, 'label' | 'title'>
+      placeholder?: string
+    }
 
 export type RangeValue = { min: string; max: string }
 /** Datetimes are `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM`, UTC like the rest of the data. */
@@ -36,7 +45,7 @@ export function isActive(value: FilterValue | undefined): value is FilterValue {
 
 function readFilter(params: URLSearchParams, key: string, spec: FilterSpec): FilterValue | undefined {
   let value: FilterValue
-  if (spec.type === 'enum') value = params.getAll(key)
+  if (spec.type === 'enum' || spec.type === 'lookup') value = params.getAll(key)
   else if (spec.type === 'number' || spec.type === 'datetime') {
     const [min, max] = rangeKeys(key, spec)
     value = { min: params.get(min) ?? '', max: params.get(max) ?? '' }

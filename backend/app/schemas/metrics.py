@@ -41,10 +41,24 @@ class TimeSeries(BaseModel):
 
 class MetricRow(Metrics):
     key: str
+    name: str | None = None  # DMA name; None for sites and unlisted DMA codes
 
 
 class MetricPage(Page[MetricRow]):
     totals: Metrics
+
+
+class SegmentOption(BaseModel):
+    """A DMA or site for a picker."""
+
+    key: str  # DMA code or site domain
+    name: str | None  # DMA name; None for sites
+    impressions: int
+
+
+class DmaRegion(BaseModel):
+    code: int
+    name: str
 
 
 class EventTypes(BaseModel):

@@ -1,5 +1,17 @@
-import { MetricFilters, useMetricParams } from '@/features/metric-filters'
-import { getAggregates, type Dimension, type MetricRow } from '@/shared/api'
+import { Link } from 'react-router'
+import { DmaLabel, useDmaNames, type DmaNames } from '@/entities/dma'
+import {
+  MetricFilters,
+  segmentFilter,
+  segmentTrendsUrl,
+  useMetricParams,
+} from '@/features/metric-filters'
+import {
+  getAggregates,
+  type AttributionMode,
+  type Dimension,
+  type MetricRow,
+} from '@/shared/api'
 import { formatNumber, formatRate, PAGE_SIZES, useRequest, useTableState } from '@/shared/lib'
 import {
   Card,
@@ -19,22 +31,41 @@ const DIMENSIONS: { value: Dimension; label: string }[] = [
 const DEFAULT_SORT = { key: 'impressions', desc: true }
 const num = 'text-right tabular-nums'
 
-const columnsFor = (dimension: Dimension, tag: string): Column<MetricRow>[] => [
+/** A row's key opens its trends; the totals row has an empty key. */
+const keyCell = (dimension: Dimension, mode: AttributionMode) => (r: MetricRow) =>
+  r.key === '' ? (
+    'Total'
+  ) : (
+    <Link
+      to={segmentTrendsUrl({ dimension, key: r.key }, mode)}
+      title="Open trends of this segment"
+      className="text-indigo-600 hover:underline dark:text-indigo-400"
+    >
+      {dimension === 'mm_dma' ? <DmaLabel code={r.key} name={r.name} /> : r.key}
+    </Link>
+  )
+
+const columnsFor = (
+  dimension: Dimension,
+  tag: string,
+  mode: AttributionMode,
+  dmaNames: DmaNames | undefined,
+): Column<MetricRow>[] => [
   dimension === 'mm_dma'
     ? {
         key: 'key',
         header: 'DMA',
-        width: 110,
-        filter: { type: 'number' },
-        cell: (r) => (r.key === '' ? 'Total' : r.key),
-        className: 'tabular-nums',
+        hint: '(Code) region',
+        width: 340,
+        filter: segmentFilter(dimension, dmaNames),
+        cell: keyCell(dimension, mode),
       }
     : {
         key: 'key',
         header: 'Site',
         width: 260,
-        filter: { type: 'text' },
-        cell: (r) => (r.key === '' ? 'Total' : r.key),
+        filter: segmentFilter(dimension),
+        cell: keyCell(dimension, mode),
       },
   {
     key: 'impressions',
@@ -84,7 +115,8 @@ export function AggregatesPage() {
   const params = useMetricParams()
   const { tag, mode, page, pageSize } = params
   const dimension: Dimension = params.get('dim') === 'site_id' ? 'site_id' : 'mm_dma'
-  const columns = columnsFor(dimension, tag)
+  const dmaNames = useDmaNames()
+  const columns = columnsFor(dimension, tag, mode, dmaNames)
   const table = useTableState(columns, DEFAULT_SORT)
 
   const key = new URLSearchParams([
@@ -111,7 +143,7 @@ export function AggregatesPage() {
           rowKey={(r) => r.key}
           loading={loading}
           error={error}
-          footer={data ? { key: '', ...data.totals } : undefined}
+          footer={data ? { key: '', name: null, ...data.totals } : undefined}
           empty="Nothing matches the filters."
           toolbar={
             <>
@@ -119,15 +151,8 @@ export function AggregatesPage() {
                 label="Group by"
                 value={dimension}
                 options={DIMENSIONS}
-                // The key filter is a number for DMAs and text for sites
-                onChange={(d) =>
-                  params.setFilters({
-                    dim: d === 'mm_dma' ? null : d,
-                    key: null,
-                    key_min: null,
-                    key_max: null,
-                  })
-                }
+                // Picked DMAs mean nothing for sites
+                onChange={(d) => params.setFilters({ dim: d === 'mm_dma' ? null : d, key: null })}
               />
               <MetricFilters
                 tag={tag}

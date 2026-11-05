@@ -1,4 +1,5 @@
 import { EventTag } from '@/entities/event'
+import { segmentFilter } from '@/features/metric-filters'
 import { getEvents, getSummary, type AdEvent } from '@/shared/api'
 import {
   formatDateTime,
@@ -41,7 +42,7 @@ const columnsFor = (tags: { value: string; label: string }[]): Column<AdEvent>[]
     header: 'Site',
     hint: 'Of the earliest impression with this UID',
     width: 220,
-    filter: { type: 'text' },
+    filter: segmentFilter('site_id'),
     cell: (r) => r.site_id ?? missing,
   },
 ]

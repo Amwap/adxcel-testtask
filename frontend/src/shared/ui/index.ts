@@ -1,6 +1,7 @@
 export { Badge } from './Badge'
 export { Button, Spinner } from './Button'
 export { Card, PageHeader } from './Card'
+export { Combobox, type ComboOption, type ComboSearch } from './Combobox'
 export { DataTable, type Column } from './data-table/DataTable'
 export { Input } from './Input'
 export { PageSizeSelect, Pagination } from './Pagination'

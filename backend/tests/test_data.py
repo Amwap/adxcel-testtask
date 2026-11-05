@@ -77,12 +77,14 @@ def get_uids(client: TestClient, headers: dict[str, str], path: str, **params) -
 @pytest.mark.parametrize(
     ("params", "uids"),
     [
-        ({"site_id": "forbes"}, ["aaa-2", "bbb-1"]),  # substring
+        ({"site_id": "www.forbes.com"}, ["aaa-2", "bbb-1"]),
+        ({"site_id": "forbes"}, []),  # exact values only
+        ({"site_id": ["www.forbes.com", "news.example.org"]}, ["aaa-2", "bbb-1", "ccc-1"]),
         ({"uid": "AAA"}, ["aaa-1", "aaa-2"]),  # prefix, case-insensitive
         ({"uid": "-1"}, []),  # prefix only
         ({"model": "phone xr"}, ["aaa-1"]),
-        ({"site_id": "%"}, []),  # LIKE wildcards are literal
-        ({"mm_dma_min": 600, "mm_dma_max": 612}, ["aaa-2", "bbb-1"]),
+        ({"mm_dma": "612"}, ["aaa-2", "bbb-1"]),
+        ({"mm_dma": ["530", "501"]}, ["aaa-1", "ccc-1"]),
         (
             {"reg_time_from": "2021-07-21T19:25:50", "reg_time_to": "2021-07-21T19:26"},
             ["aaa-2", "bbb-1"],
@@ -92,7 +94,7 @@ def get_uids(client: TestClient, headers: dict[str, str], path: str, **params) -
         ({"fc_imp_chk": ["-1", "1"]}, ["bbb-1", "ccc-1"]),
         ({"events": "vcontent"}, ["bbb-1"]),
         ({"events": ["fclick", "vcontent"]}, ["aaa-2", "bbb-1"]),
-        ({"site_id": "forbes", "os_name": "iOS"}, ["aaa-2"]),  # conditions combine
+        ({"site_id": "www.forbes.com", "os_name": "iOS"}, ["aaa-2"]),  # conditions combine
     ],
 )
 def test_impressions_filters(
@@ -119,13 +121,12 @@ def test_impressions_sort(
 @pytest.mark.parametrize(
     "params",
     [
-        {"mm_dma_min": "abc"},
-        {"mm_dma_max": "inf"},
+        {"mm_dma": "x"},
         {"reg_time_from": "yesterday"},
         {"fc_imp_chk": "x"},
         {"sort": "password"},
         {"sort": "uid", "order": "up"},
-        {"site_id": "x" * 101},
+        {"site_id": [f"s{i}.com" for i in range(51)]},
     ],
 )
 def test_impressions_reject_bad_filters(
@@ -148,7 +149,9 @@ def test_events_filter_and_join(client: TestClient, auth_headers: dict[str, str]
     assert by_uid["zzz-9"]["site_id"] is None  # event without an impression
 
     assert get_uids(client, auth_headers, "events", uid="bbb") == ["bbb-1"]
-    assert get_uids(client, auth_headers, "events", site_id="FORBES", tag="vcontent") == ["bbb-1"]
+    assert get_uids(client, auth_headers, "events", site_id="www.forbes.com", tag="vcontent") == [
+        "bbb-1"
+    ]
     assert get_uids(
         client, auth_headers, "events", reg_time_from="2021-07-21T19:26", sort="uid"
     ) == ["bbb-1"]

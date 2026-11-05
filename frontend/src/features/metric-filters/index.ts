@@ -1,2 +1,5 @@
-export { useMetricParams } from './model/useMetricParams'
+export { segmentLabel } from './model/segment'
+export { segmentFilter } from './model/segmentLookup'
+export { segmentTrendsUrl, useMetricParams } from './model/useMetricParams'
 export { MetricFilters, ModeSwitch } from './ui/MetricFilters'
+export { SegmentPicker } from './ui/SegmentPicker'

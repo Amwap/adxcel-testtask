@@ -8,7 +8,9 @@ export function describeFilter(spec: FilterSpec, value: FilterValue): string {
     const labels =
       spec.type === 'enum'
         ? value.map((v) => spec.options.find((o) => o.value === v)?.label ?? v)
-        : value
+        : spec.type === 'lookup' && spec.labelOf
+          ? value.map((v) => spec.labelOf!(v).label)
+          : value
     return labels.length > 3 ? `${labels.slice(0, 2).join(', ')} +${labels.length - 2}` : labels.join(', ')
   }
   if (typeof value === 'string') return spec.type === 'prefix' ? `${value}…` : `“${value}”`

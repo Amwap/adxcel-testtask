@@ -27,9 +27,10 @@ def list_impressions(
 ) -> Page[ImpressionRead]:
     """Filter and sort by any column (see `app.services.table` for the parameters).
 
-    Fields: `reg_time` datetime, `uid` prefix, `site_id` and `model` text, `mm_dma` number;
-    enums `os_name`, `hardware`, `fc_imp_chk`, `fc_time_chk`, `utmtr` (codes) and
-    `events` (has an event of the type; sorts by the number of events).
+    Fields: `reg_time` datetime, `uid` prefix, `model` text; enums `site_id`, `mm_dma`
+    (exact values, see `/metrics/segments`), `os_name`, `hardware`, `fc_imp_chk`,
+    `fc_time_chk`, `utmtr` (codes) and `events` (has an event of the type; sorts by the number
+    of events).
     """
     return data.list_impressions(db, page, page_size, table_query(request, data.IMPRESSION_FIELDS))
 
@@ -45,6 +46,6 @@ def list_events(
     """Filter and sort by any column (see `app.services.table` for the parameters).
 
     Fields: `tag` enum, `uid` prefix, and from the earliest impression with the uid:
-    `reg_time` datetime, `site_id` text.
+    `reg_time` datetime, `site_id` enum.
     """
     return data.list_events(db, page, page_size, table_query(request, data.EVENT_FIELDS))
