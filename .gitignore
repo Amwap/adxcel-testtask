@@ -1,0 +1,6 @@
+.DS_Store
+.idea/
+*.log
+
+# Task materials (spec and raw data)
+.task/
