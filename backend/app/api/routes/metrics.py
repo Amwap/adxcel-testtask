@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 
 from app.api.deps import CurrentUser, DbSession
 from app.schemas.metrics import (
@@ -32,12 +32,18 @@ def event_types(db: DbSession, _user: CurrentUser) -> EventTypes:
 def timeseries(
     db: DbSession,
     _user: CurrentUser,
-    tag: Tag = metrics.CLICK_TAG,
+    tag: Annotated[
+        list[str] | None,
+        Query(max_length=16, description="Event types for EvPM, repeatable"),
+    ] = None,
     mode: ModeParam = "first",
     granularity: Granularity = "hour",
 ) -> TimeSeries:
-    """CTR (by fclick) and EvPM (by `tag`) per hour or day."""
-    return metrics.timeseries(db, tag, mode, granularity)
+    """CTR (by fclick) and EvPM of each `tag` per hour or day."""
+    tags = list(dict.fromkeys(t.strip() for t in tag or [metrics.CLICK_TAG] if t.strip()))
+    if any(len(t) > 32 for t in tags):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Event type is too long")
+    return metrics.timeseries(db, tags, mode, granularity)
 
 
 @router.get("/aggregates/{dimension}")

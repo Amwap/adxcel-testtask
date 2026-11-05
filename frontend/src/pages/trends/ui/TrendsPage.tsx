@@ -1,79 +1,221 @@
-import type { ReactNode } from 'react'
-import { MetricFilters, useMetricParams } from '@/features/metric-filters'
-import { getTimeSeries, type Granularity, type TimePoint } from '@/shared/api'
-import { formatDateTime, formatNumber, formatRate, useRequest } from '@/shared/lib'
-import { Card, DataTable, PageHeader, SegmentedControl, Spinner, type Column } from '@/shared/ui'
-import { MetricChart } from './MetricChart'
+import { useMemo, type ReactNode } from 'react'
+import { ModeSwitch, useMetricParams } from '@/features/metric-filters'
+import { getEventTypes, getTimeSeries } from '@/shared/api'
+import { formatDay, formatNumber, formatRate, useRequest } from '@/shared/lib'
+import {
+  Button,
+  Card,
+  DataTable,
+  PageHeader,
+  SegmentedControl,
+  Select,
+  Spinner,
+  type Column,
+} from '@/shared/ui'
+import { parsePeriod, toDateInput, toHourParam } from '../model/period'
+import {
+  buildPoints,
+  inRange,
+  totalsOf,
+  type ChartPoint,
+  type Range,
+  type Resolution,
+} from '../model/series'
+import { RateChart, VolumeChart, type RateSeries } from './charts'
+import { useChartTheme } from './chartTheme'
 
-const GRANULARITIES: { value: Granularity; label: string }[] = [
-  { value: 'hour', label: 'Hourly' },
-  { value: 'day', label: 'Daily' },
+const RESOLUTIONS: { value: Resolution; label: string; title: string }[] = [
+  { value: 'rolling', label: '24h rolling', title: 'Each hour shows the trailing 24 hours' },
+  { value: 'hour', label: 'Hourly', title: 'Raw hourly buckets' },
+  { value: 'day', label: 'Daily', title: 'Calendar days, UTC' },
 ]
 
-function StatTile({ label, value, hint }: { label: string; value: string; hint: string }) {
+const DEFAULT_MIN = 100
+const MIN_IMPRESSIONS = [
+  { value: '0', label: 'Show all buckets' },
+  { value: '100', label: 'Hide under 100 impressions' },
+  { value: '500', label: 'Hide under 500 impressions' },
+  { value: '1000', label: 'Hide under 1,000 impressions' },
+]
+
+const DEFAULT_TAG = 'registration'
+const num = 'text-right tabular-nums'
+const rate = (v: number | null, unit: '%' | '‰') => (v === null ? '—' : formatRate(v, unit))
+
+const dateInput =
+  'rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-slate-300 ring-inset focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-slate-900 dark:text-white dark:ring-slate-700 dark:[color-scheme:dark]'
+
+function StatTile({
+  label,
+  value,
+  hint,
+  color,
+}: {
+  label: string
+  value: string
+  hint: string
+  color?: string
+}) {
   return (
     <Card className="p-5">
-      <p className="text-sm font-medium text-slate-500 dark:text-slate-400">{label}</p>
-      <p className="mt-1 text-3xl font-semibold tracking-tight">{value}</p>
+      <p className="flex items-center gap-2 text-sm font-medium text-slate-500 dark:text-slate-400">
+        {color && <span className="h-0.5 w-4 rounded-full" style={{ background: color }} />}
+        {label}
+      </p>
+      <p className="mt-1 text-3xl font-semibold tracking-tight tabular-nums">{value}</p>
       <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">{hint}</p>
     </Card>
   )
 }
 
-function ChartCard({
+function ChartHeader({
   title,
   formula,
-  loading,
   children,
 }: {
   title: string
   formula: string
-  loading: boolean
-  children: ReactNode
+  children?: ReactNode
 }) {
   return (
-    <Card className="p-5">
-      <div className="mb-4 flex items-baseline justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formula}</p>
-        </div>
-        {loading && <Spinner className="size-4 text-indigo-600" />}
+    <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div>
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{formula}</p>
       </div>
       {children}
-    </Card>
+    </div>
+  )
+}
+
+function TagToggle({
+  tag,
+  color,
+  checked,
+  onChange,
+}: {
+  tag: string
+  color: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-center gap-2 text-sm select-none ${checked ? 'text-slate-900 dark:text-white' : 'text-slate-500 dark:text-slate-400'}`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-4 cursor-pointer"
+        style={{ accentColor: color }}
+      />
+      <span
+        aria-hidden="true"
+        className={`h-0.5 w-4 rounded-full ${checked ? '' : 'opacity-30'}`}
+        style={{ background: color }}
+      />
+      {tag}
+    </label>
   )
 }
 
 export function TrendsPage() {
   const params = useMetricParams()
-  const { tag, mode } = params
-  const granularity: Granularity = params.get('granularity') === 'day' ? 'day' : 'hour'
+  const { mode } = params
+  const theme = useChartTheme()
 
-  const { data, error, loading } = useRequest(`${tag}|${mode}|${granularity}`, (signal) =>
-    getTimeSeries({ tag, mode, granularity }, signal),
+  const resParam = params.get('res') as Resolution
+  const resolution: Resolution = RESOLUTIONS.some((r) => r.value === resParam) ? resParam : 'rolling'
+  const minParam = params.get('min')
+  const minImpressions = minParam === '' ? DEFAULT_MIN : Number(minParam) || 0
+
+  // Every event type comes in one request, so toggling lines never waits on the network
+  const { data, error, loading } = useRequest(mode, async (signal) => {
+    const types = await getEventTypes(signal)
+    const tags = types.tags.filter((t) => t !== types.click_tag)
+    const series = await getTimeSeries({ tags, mode, granularity: 'hour' }, signal)
+    return { clickTag: types.click_tag, tags, series }
+  })
+
+  const allTags = data?.tags ?? []
+  const picked = params.get('tags').split(',').filter((t) => allTags.includes(t))
+  const fallback = allTags.includes(DEFAULT_TAG) ? [DEFAULT_TAG] : allTags.slice(0, 1)
+  const tags = picked.length ? picked : fallback
+  const colorOf = (tag: string) => theme.tag(allTags.indexOf(tag))
+
+  const toggleTag = (tag: string, on: boolean) => {
+    const next = allTags.filter((t) => (t === tag ? on : tags.includes(t)))
+    // The chart always keeps at least one line
+    if (!next.length) return
+    const isDefault = next.length === fallback.length && next.every((t) => fallback.includes(t))
+    params.setFilter('tags', isDefault ? '' : next.join(','))
+  }
+
+  // Period of the charts and totals, kept in the URL
+  const range = parsePeriod(params.get('from'), params.get('to'))
+  const setPeriod = (next: Range | null) => {
+    params.setFilters({
+      from: next && Number.isFinite(next.from) ? toHourParam(next.from) : null,
+      to: next && Number.isFinite(next.to) ? toHourParam(next.to) : null,
+    })
+  }
+
+  const allPoints = useMemo(
+    () => (data ? buildPoints(data.series.points, data.tags, resolution, minImpressions) : []),
+    [data, resolution, minImpressions],
   )
+  const points = useMemo(() => inRange(allPoints, range, resolution), [allPoints, range, resolution])
+  const totals = useMemo(
+    () => (data ? totalsOf(data.series.points, data.tags, range) : null),
+    [data, range],
+  )
+  const bounds = allPoints.length
+    ? { first: allPoints[0].t, last: allPoints[allPoints.length - 1].t }
+    : null
 
-  const tableColumns: Column<TimePoint>[] = [
-    { key: 'ts', header: 'Period', cell: (r) => formatDateTime(r.ts) },
+  const clickTag = data?.clickTag ?? 'fclick'
+  const ctrSeries: RateSeries[] = [
+    {
+      key: 'ctr',
+      label: 'CTR',
+      color: theme.ctr,
+      value: (p) => p.ctr,
+      detail: (p) => `${formatNumber(p.clicks)} ${clickTag}`,
+    },
+  ]
+  const evpmSeries: RateSeries[] = tags.map((tag) => ({
+    key: tag,
+    label: tag,
+    color: colorOf(tag),
+    value: (p) => p.evpm[tag] ?? null,
+    detail: (p) => `${formatNumber(p.events[tag] ?? 0)} ${tag}`,
+  }))
+
+  const tableColumns: Column<ChartPoint>[] = [
+    {
+      key: 't',
+      header: resolution === 'rolling' ? 'Hour (24h window)' : 'Period',
+      cell: (r) =>
+        new Date(r.t)
+          .toISOString()
+          .slice(0, resolution === 'day' ? 10 : 16)
+          .replace('T', ' '),
+      className: 'tabular-nums',
+    },
     {
       key: 'imp',
       header: 'Impressions',
-      cell: (r) => formatNumber(r.impressions),
-      className: 'text-right tabular-nums',
+      cell: (r) => formatNumber(r.base),
+      className: num,
     },
-    {
-      key: 'ctr',
-      header: 'CTR',
-      cell: (r) => formatRate(r.ctr, '%'),
-      className: 'text-right tabular-nums',
-    },
-    {
-      key: 'evpm',
-      header: `EvPM (${tag})`,
-      cell: (r) => formatRate(r.evpm, '‰'),
-      className: 'text-right tabular-nums',
-    },
+    { key: 'ctr', header: 'CTR', cell: (r) => rate(r.ctr, '%'), className: num },
+    ...tags.map((tag) => ({
+      key: tag,
+      header: `EvPM · ${tag}`,
+      cell: (r: ChartPoint) => rate(r.evpm[tag] ?? null, '‰'),
+      className: num,
+    })),
   ]
 
   return (
@@ -83,69 +225,158 @@ export function TrendsPage() {
         description="Campaign CTR and EvPM over time. Events without a matching impression are excluded."
       />
 
-      <Card className="mb-6 flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
-        <MetricFilters
-          tag={tag}
-          mode={mode}
-          onTagChange={params.setTag}
-          onModeChange={params.setMode}
-        />
-        <SegmentedControl
-          label="Granularity"
-          value={granularity}
-          options={GRANULARITIES}
-          onChange={(g) => params.setFilter('granularity', g === 'hour' ? '' : g)}
-        />
+      <Card className="mb-6 flex flex-col gap-4 p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
+          <div className="flex items-center gap-3">
+            <ModeSwitch mode={mode} onChange={params.setMode} />
+            {loading && data && <Spinner className="size-4 text-indigo-600" />}
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <SegmentedControl
+              label="Resolution"
+              value={resolution}
+              options={RESOLUTIONS}
+              onChange={(r) => params.setFilter('res', r === 'rolling' ? '' : r)}
+            />
+            <Select
+              label="Low-volume buckets"
+              value={String(minImpressions)}
+              onChange={(e) =>
+                params.setFilter('min', Number(e.target.value) === DEFAULT_MIN ? '' : e.target.value)
+              }
+              options={MIN_IMPRESSIONS}
+            />
+          </div>
+        </div>
+
+        {bounds && (
+          <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+              <span>Period</span>
+              <span className="flex items-center gap-2">
+                <input
+                  type="date"
+                  aria-label="From"
+                  className={dateInput}
+                  min={toDateInput(bounds.first)}
+                  max={toDateInput(bounds.last)}
+                  value={toDateInput(range?.from ?? bounds.first) || toDateInput(bounds.first)}
+                  onChange={(e) =>
+                    setPeriod({
+                      from: e.target.value ? Date.parse(`${e.target.value}T00:00:00Z`) : -Infinity,
+                      to: range?.to ?? Infinity,
+                    })
+                  }
+                />
+                –
+                <input
+                  type="date"
+                  aria-label="To"
+                  className={dateInput}
+                  min={toDateInput(bounds.first)}
+                  max={toDateInput(bounds.last)}
+                  value={toDateInput(range?.to ?? bounds.last) || toDateInput(bounds.last)}
+                  onChange={(e) =>
+                    setPeriod({
+                      from: range?.from ?? -Infinity,
+                      to: e.target.value ? Date.parse(`${e.target.value}T23:00:00Z`) : Infinity,
+                    })
+                  }
+                />
+              </span>
+              {range && (
+                <Button variant="secondary" className="px-3 py-2" onClick={() => setPeriod(null)}>
+                  All time
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
       </Card>
 
       {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error.message}</p>}
 
-      {!data ? (
+      {!data || !totals ? (
         !error && <Spinner className="mx-auto mt-16 size-6 text-indigo-600" />
       ) : (
         <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-3">
+          <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             <StatTile
               label="Impressions"
-              value={formatNumber(data.totals.impressions)}
-              hint={`${data.points.length} ${granularity === 'hour' ? 'hours' : 'days'}`}
+              value={formatNumber(totals.impressions)}
+              hint={
+                range && points.length
+                  ? `${formatDay(points[0].t)} – ${formatDay(points[points.length - 1].t)}`
+                  : `${data.series.points.length} hours with impressions`
+              }
             />
             <StatTile
               label="CTR"
-              value={formatRate(data.totals.ctr, '%')}
-              hint={`${formatNumber(data.totals.clicks)} first clicks`}
+              color={theme.ctr}
+              value={formatRate(totals.ctr, '%')}
+              hint={`${formatNumber(totals.clicks)} first clicks`}
             />
-            <StatTile
-              label={`EvPM · ${tag}`}
-              value={formatRate(data.totals.evpm, '‰')}
-              hint={`${formatNumber(data.totals.events)} events`}
-            />
+            {tags.map((tag) => (
+              <StatTile
+                key={tag}
+                label={`EvPM · ${tag}`}
+                color={colorOf(tag)}
+                value={formatRate(totals.evpm[tag] ?? 0, '‰')}
+                hint={`${formatNumber(totals.events[tag] ?? 0)} events`}
+              />
+            ))}
           </div>
 
-          <div className="grid gap-6 xl:grid-cols-2">
-            <ChartCard title="CTR, %" formula="100 × fclick / impressions" loading={loading}>
-              <MetricChart
-                points={data.points}
-                metric="ctr"
+          {points.length === 0 ? (
+            <Card className="p-10 text-center text-sm text-slate-500">
+              Nothing to show in this period with the current threshold.
+            </Card>
+          ) : (
+            <Card className="p-5">
+              <ChartHeader title="CTR, %" formula={`100 × ${clickTag} / impressions`} />
+              <RateChart
+                points={points}
+                series={ctrSeries}
                 unit="%"
-                numeratorLabel="fclick"
-                granularity={granularity}
+                resolution={resolution}
+                minImpressions={minImpressions}
+                theme={theme}
               />
-            </ChartCard>
-            <ChartCard
-              title={`EvPM · ${tag}, ‰`}
-              formula={`1000 × (${tag} + v${tag}) / impressions`}
-              loading={loading}
-            >
-              <MetricChart
-                points={data.points}
-                metric="evpm"
-                unit="‰"
-                numeratorLabel={tag}
-                granularity={granularity}
-              />
-            </ChartCard>
-          </div>
+
+              <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
+                <ChartHeader title="EvPM, ‰" formula="1000 × (type + v·type) / impressions">
+                  <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2">
+                    <legend className="sr-only">Event types</legend>
+                    {allTags.map((tag) => (
+                      <TagToggle
+                        key={tag}
+                        tag={tag}
+                        color={colorOf(tag)}
+                        checked={tags.includes(tag)}
+                        onChange={(on) => toggleTag(tag, on)}
+                      />
+                    ))}
+                  </fieldset>
+                </ChartHeader>
+                <RateChart
+                  points={points}
+                  series={evpmSeries}
+                  unit="‰"
+                  resolution={resolution}
+                  minImpressions={minImpressions}
+                  theme={theme}
+                />
+              </div>
+
+              <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
+                <ChartHeader
+                  title="Impressions"
+                  formula={`Per ${resolution === 'day' ? 'day' : 'hour'}; rates are hidden where volume is under the threshold`}
+                />
+                <VolumeChart points={points} resolution={resolution} theme={theme} />
+              </div>
+            </Card>
+          )}
 
           <Card className="mt-6">
             <details>
@@ -155,8 +386,8 @@ export function TrendsPage() {
               <div className="max-h-96 overflow-y-auto border-t border-slate-200 dark:border-slate-800">
                 <DataTable
                   columns={tableColumns}
-                  rows={data.points}
-                  rowKey={(r) => r.ts}
+                  rows={points}
+                  rowKey={(r) => r.t}
                   loading={loading}
                 />
               </div>

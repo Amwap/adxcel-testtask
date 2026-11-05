@@ -14,6 +14,7 @@ from app.schemas.metrics import (
     MetricRow,
     Metrics,
     Mode,
+    SeriesMetrics,
     SortField,
     TimePoint,
     TimeSeries,
@@ -82,20 +83,55 @@ def event_types(db: Session) -> EventTypes:
     return EventTypes(tags=list(tags), click_tag=CLICK_TAG)
 
 
-def timeseries(db: Session, tag: str, mode: Mode, granularity: Granularity) -> TimeSeries:
-    rows = db.execute(_rollup_query("hour", tag, mode).order_by(ImpressionRollup.key))
+def _series_metrics(impressions: int, events: dict[str, int], tags: list[str]) -> dict:
+    clicks = events.get(CLICK_TAG, 0)
+    counts = {t: events.get(t, 0) for t in tags}
+    return {
+        "impressions": impressions,
+        "clicks": clicks,
+        "ctr": 100 * clicks / impressions if impressions else 0.0,
+        "events": counts,
+        "evpm": {t: 1000 * n / impressions if impressions else 0.0 for t, n in counts.items()},
+    }
 
-    buckets: dict[str, list[int]] = defaultdict(lambda: [0, 0, 0])
-    for r in rows:
-        ts = r.key if granularity == "hour" else f"{r.key[:10]}T00:00:00"
-        b = buckets[ts]
-        b[0] += r.impressions
-        b[1] += r.clicks
-        b[2] += r.events
 
-    points = [TimePoint(ts=ts, **_metrics(*b)) for ts, b in buckets.items()]
-    totals = Metrics(**_metrics(*(sum(b[i] for b in buckets.values()) for i in range(3))))
-    return TimeSeries(tag=tag, mode=mode, granularity=granularity, points=points, totals=totals)
+def timeseries(db: Session, tags: list[str], mode: Mode, granularity: Granularity) -> TimeSeries:
+    """CTR and EvPM of each of `tags` per hour or day, in one pass over the hourly rollups."""
+
+    def bucket(key: str) -> str:
+        return key if granularity == "hour" else f"{key[:10]}T00:00:00"
+
+    impressions: dict[str, int] = defaultdict(int)
+    for k, n in db.execute(
+        select(ImpressionRollup.key, ImpressionRollup.impressions)
+        .where(ImpressionRollup.dimension == "hour")
+        .order_by(ImpressionRollup.key)
+    ):
+        impressions[bucket(k)] += n
+
+    events: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    totals: dict[str, int] = defaultdict(int)
+    for k, tag, n in db.execute(
+        select(EventRollup.key, EventRollup.tag, EventRollup.events).where(
+            EventRollup.dimension == "hour",
+            EventRollup.mode == mode,
+            EventRollup.tag.in_({CLICK_TAG, *tags}),
+        )
+    ):
+        events[bucket(k)][tag] += n
+        totals[tag] += n
+
+    points = [
+        TimePoint(ts=ts, **_series_metrics(n, events.get(ts, {}), tags))
+        for ts, n in impressions.items()
+    ]
+    return TimeSeries(
+        tags=tags,
+        mode=mode,
+        granularity=granularity,
+        points=points,
+        totals=SeriesMetrics(**_series_metrics(sum(impressions.values()), totals, tags)),
+    )
 
 
 def aggregate(

@@ -55,6 +55,7 @@ def test_timeseries_hourly(
     client: TestClient, auth_headers: dict, mode: str, clicks: list[int], events: list[int]
 ) -> None:
     body = get(client, auth_headers, "/timeseries", tag="registration", mode=mode)
+    assert body["tags"] == ["registration"]
     points = body["points"]
     assert [p["ts"] for p in points] == [
         "2021-07-21T10:00:00",
@@ -63,9 +64,9 @@ def test_timeseries_hourly(
     ]
     assert [p["impressions"] for p in points] == [2, 1, 1]
     assert [p["clicks"] for p in points] == clicks
-    assert [p["events"] for p in points] == events
+    assert [p["events"]["registration"] for p in points] == events
     assert points[0]["ctr"] == 100.0
-    assert points[0]["evpm"] == 1000.0
+    assert points[0]["evpm"] == {"registration": 1000.0}
 
 
 def test_timeseries_daily_totals(client: TestClient, auth_headers: dict) -> None:
@@ -78,13 +79,30 @@ def test_timeseries_daily_totals(client: TestClient, auth_headers: dict) -> None
     assert first["totals"] == {
         "impressions": 4,
         "clicks": 2,
-        "events": 2,
         "ctr": 50.0,
-        "evpm": 500.0,
+        "events": {"registration": 2},
+        "evpm": {"registration": 500.0},
     }
     every = get(client, auth_headers, "/timeseries", tag="registration", mode="all")
     assert every["totals"]["ctr"] == 75.0
-    assert every["totals"]["evpm"] == 750.0
+    assert every["totals"]["evpm"] == {"registration": 750.0}
+
+
+def test_timeseries_several_tags(client: TestClient, auth_headers: dict) -> None:
+    body = get(client, auth_headers, "/timeseries", tag=["registration", "fclick", "lead"])
+    assert body["tags"] == ["registration", "fclick", "lead"]
+    # An unknown type is a series of zeros, not an error
+    assert body["totals"]["events"] == {"registration": 2, "fclick": 2, "lead": 0}
+    assert get(client, auth_headers, "/timeseries")["tags"] == ["fclick"]
+
+
+def test_timeseries_rejects_too_many_tags(client: TestClient, auth_headers: dict) -> None:
+    res = client.get(
+        "/api/metrics/timeseries",
+        params={"tag": [f"t{i}" for i in range(17)]},
+        headers=auth_headers,
+    )
+    assert res.status_code == 422
 
 
 def test_aggregate_by_dma(client: TestClient, auth_headers: dict) -> None:

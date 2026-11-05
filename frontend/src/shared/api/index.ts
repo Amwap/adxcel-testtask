@@ -25,7 +25,9 @@ export {
   type MetricRow,
   type Metrics,
   type MetricSortField,
+  type SeriesMetrics,
   type TimePoint,
   type TimeSeries,
+  type TimeSeriesQuery,
 } from './metrics'
 export { onSessionExpired, refreshAccessToken } from './token'

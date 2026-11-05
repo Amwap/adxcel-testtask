@@ -1,2 +1,2 @@
 export { useMetricParams } from './model/useMetricParams'
-export { MetricFilters } from './ui/MetricFilters'
+export { MetricFilters, ModeSwitch } from './ui/MetricFilters'

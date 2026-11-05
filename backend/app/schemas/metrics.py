@@ -18,16 +18,26 @@ class Metrics(BaseModel):
     evpm: float  # per mille = 1000 * events / impressions
 
 
-class TimePoint(Metrics):
+class SeriesMetrics(BaseModel):
+    """Like `Metrics`, but with an EvPM numerator per requested event type."""
+
+    impressions: int
+    clicks: int
+    ctr: float
+    events: dict[str, int]
+    evpm: dict[str, float]
+
+
+class TimePoint(SeriesMetrics):
     ts: str  # bucket start, naive ISO datetime
 
 
 class TimeSeries(BaseModel):
-    tag: str
+    tags: list[str]
     mode: Mode
     granularity: Granularity
     points: list[TimePoint]
-    totals: Metrics
+    totals: SeriesMetrics
 
 
 class MetricRow(Metrics):

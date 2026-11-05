@@ -22,6 +22,22 @@ const MODES: { value: AttributionMode; label: string; title: string }[] = [
   },
 ]
 
+/** How events of a uid with several impressions are attributed. */
+export function ModeSwitch({
+  mode,
+  onChange,
+}: {
+  mode: AttributionMode
+  onChange: (mode: AttributionMode) => void
+}) {
+  return (
+    <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+      <span>Duplicate UIDs</span>
+      <SegmentedControl label="Duplicate UIDs" value={mode} options={MODES} onChange={onChange} />
+    </div>
+  )
+}
+
 /** Event type for EvPM and how events of duplicate uids are attributed. */
 export function MetricFilters({ tag, mode, onTagChange, onModeChange }: MetricFiltersProps) {
   const { data } = useRequest('event-types', getEventTypes)
@@ -38,15 +54,7 @@ export function MetricFilters({ tag, mode, onTagChange, onModeChange }: MetricFi
           options={tags.map((t) => ({ value: t, label: t }))}
         />
       </label>
-      <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-        <span>Duplicate UIDs</span>
-        <SegmentedControl
-          label="Duplicate UIDs"
-          value={mode}
-          options={MODES}
-          onChange={onModeChange}
-        />
-      </div>
+      <ModeSwitch mode={mode} onChange={onModeChange} />
     </div>
   )
 }

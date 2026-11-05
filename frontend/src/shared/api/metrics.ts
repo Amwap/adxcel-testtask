@@ -19,14 +19,23 @@ export type Metrics = {
   evpm: number
 }
 
-export type TimePoint = Metrics & { ts: string }
+/** Like `Metrics`, with an EvPM numerator per requested event type. */
+export type SeriesMetrics = {
+  impressions: number
+  clicks: number
+  ctr: number
+  events: Record<string, number>
+  evpm: Record<string, number>
+}
+
+export type TimePoint = SeriesMetrics & { ts: string }
 
 export type TimeSeries = {
-  tag: string
+  tags: string[]
   mode: AttributionMode
   granularity: Granularity
   points: TimePoint[]
-  totals: Metrics
+  totals: SeriesMetrics
 }
 
 export type MetricRow = Metrics & { key: string }
@@ -46,18 +55,22 @@ export type AggregateQuery = MetricQuery & {
   order?: 'asc' | 'desc'
 }
 
-const toSearch = (params: Record<string, string | number | undefined>) =>
+const toSearch = (params: Record<string, string | number | string[] | undefined>) =>
   new URLSearchParams(
-    Object.entries(params).flatMap(([k, v]) => (v === undefined || v === '' ? [] : [[k, String(v)]])),
+    Object.entries(params).flatMap(([k, v]) =>
+      (Array.isArray(v) ? v : [v]).flatMap((x) => (x === undefined || x === '' ? [] : [[k, String(x)]])),
+    ),
   ).toString()
 
 export const getEventTypes = (signal?: AbortSignal) =>
   apiGet<EventTypes>('/metrics/event-types', { signal })
 
-export const getTimeSeries = (
-  { tag, mode, granularity }: MetricQuery & { granularity: Granularity },
-  signal?: AbortSignal,
-) => apiGet<TimeSeries>(`/metrics/timeseries?${toSearch({ tag, mode, granularity })}`, { signal })
+export type TimeSeriesQuery = { tags: string[]; mode: AttributionMode; granularity: Granularity }
+
+export const getTimeSeries = ({ tags, mode, granularity }: TimeSeriesQuery, signal?: AbortSignal) =>
+  apiGet<TimeSeries>(`/metrics/timeseries?${toSearch({ tag: tags, mode, granularity })}`, {
+    signal,
+  })
 
 export const getAggregates = (dimension: Dimension, query: AggregateQuery, signal?: AbortSignal) =>
   apiGet<MetricPage>(
