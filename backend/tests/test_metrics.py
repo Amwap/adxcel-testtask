@@ -134,6 +134,68 @@ def test_timeseries_of_one_site(client: TestClient, auth_headers: dict) -> None:
     ]
 
 
+def hourly(body: dict) -> list[tuple]:
+    return [(p["ts"], p["impressions"], p["clicks"], p["events"]) for p in body["points"]]
+
+
+@pytest.mark.parametrize(
+    ("params", "points"),
+    [
+        # b's first impression is in DMA 500, so its click goes with it in the first mode
+        (
+            {"exclude_mm_dma": 500},
+            [
+                ("2021-07-21T11:00:00", 1, 0, {"registration": 0}),
+                ("2021-07-22T09:00:00", 1, 0, {"registration": 0}),
+            ],
+        ),
+        (
+            {"exclude_mm_dma": 500, "mode": "all"},
+            [
+                ("2021-07-21T11:00:00", 1, 1, {"registration": 1}),
+                ("2021-07-22T09:00:00", 1, 0, {"registration": 0}),
+            ],
+        ),
+        (
+            {"exclude_site_id": ["s1.com", "nope.com"]},
+            [
+                ("2021-07-21T10:00:00", 1, 1, {"registration": 1}),
+                ("2021-07-21T11:00:00", 1, 0, {"registration": 0}),
+            ],
+        ),
+        # Both dimensions: the impression of DMA 600 on s2.com is subtracted once, not twice
+        (
+            {"exclude_mm_dma": 600, "exclude_site_id": "s2.com"},
+            [("2021-07-21T10:00:00", 1, 1, {"registration": 1})],
+        ),
+        ({"exclude_mm_dma": [500, 600], "exclude_site_id": "s1.com"}, []),
+        (
+            {"mm_dma": 500, "exclude_site_id": "s2.com"},
+            [("2021-07-21T10:00:00", 1, 1, {"registration": 1})],
+        ),
+        (
+            {"site_id": "s2.com", "exclude_mm_dma": 500, "mode": "all"},
+            [("2021-07-21T11:00:00", 1, 1, {"registration": 1})],
+        ),
+    ],
+)
+def test_timeseries_excluding_segments(
+    client: TestClient, auth_headers: dict, params: dict, points: list[tuple]
+) -> None:
+    body = get(client, auth_headers, "/timeseries", tag="registration", **params)
+    assert hourly(body) == points
+    assert body["totals"]["impressions"] == sum(p[1] for p in points)
+    assert body["totals"]["clicks"] == sum(p[2] for p in points)
+
+
+def test_timeseries_exclusion_daily(client: TestClient, auth_headers: dict) -> None:
+    body = get(client, auth_headers, "/timeseries", exclude_site_id="s2.com", granularity="day")
+    assert [(p["ts"], p["impressions"]) for p in body["points"]] == [
+        ("2021-07-21T00:00:00", 1),
+        ("2021-07-22T00:00:00", 1),
+    ]
+
+
 def test_timeseries_segment_errors(client: TestClient, auth_headers: dict) -> None:
     # An unknown segment is an empty series, like a filter that matches nothing
     assert get(client, auth_headers, "/timeseries", site_id="nope.com")["points"] == []
@@ -141,6 +203,12 @@ def test_timeseries_segment_errors(client: TestClient, auth_headers: dict) -> No
         "/api/metrics/timeseries", params={"mm_dma": 500, "site_id": "s1.com"}, headers=auth_headers
     )
     assert res.status_code == 422
+    for params in (
+        {"mm_dma": 500, "exclude_mm_dma": 600},
+        {"site_id": "s1.com", "exclude_site_id": "s2.com"},
+    ):
+        res = client.get("/api/metrics/timeseries", params=params, headers=auth_headers)
+        assert res.status_code == 422
 
 
 def test_aggregate_by_dma(client: TestClient, auth_headers: dict) -> None:

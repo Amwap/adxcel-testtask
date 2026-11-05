@@ -97,16 +97,21 @@ export const getEventTypes = (signal?: AbortSignal) =>
 /** One DMA or site; `key` is the DMA code or the site domain. */
 export type Segment = { dimension: Dimension; key: string }
 
+/** DMA codes and site domains left out of the metrics. */
+export type Exclusions = Record<Dimension, string[]>
+
 export type TimeSeriesQuery = {
   tags: string[]
   mode: AttributionMode
   granularity: Granularity
   /** Campaign-wide when absent. */
   segment?: Segment
+  /** Not of the segment's own dimension. */
+  exclude?: Exclusions
 }
 
 export const getTimeSeries = (
-  { tags, mode, granularity, segment }: TimeSeriesQuery,
+  { tags, mode, granularity, segment, exclude }: TimeSeriesQuery,
   signal?: AbortSignal,
 ) =>
   apiGet<TimeSeries>(
@@ -115,6 +120,8 @@ export const getTimeSeries = (
       mode,
       granularity,
       ...(segment && { [segment.dimension]: segment.key }),
+      exclude_mm_dma: exclude?.mm_dma,
+      exclude_site_id: exclude?.site_id,
     })}`,
     { signal },
   )

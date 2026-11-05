@@ -1,6 +1,6 @@
-import type { AttributionMode, Segment } from '@/shared/api'
+import type { AttributionMode, Dimension, Segment } from '@/shared/api'
 import { useListParams } from '@/shared/lib'
-import { readSegment, segmentParams } from './segment'
+import { exclusionParams, readExclusions, readSegment, segmentParams } from './segment'
 
 export const DEFAULT_TAG = 'fclick'
 export const DEFAULT_MODE: AttributionMode = 'first'
@@ -17,15 +17,22 @@ export function segmentTrendsUrl(segment: Segment, mode: AttributionMode) {
 export function useMetricParams() {
   const list = useListParams()
   const mode: AttributionMode = list.get('mode') === 'all' ? 'all' : DEFAULT_MODE
+  const segment = readSegment(list.get)
 
   return {
     ...list,
     tag: list.get('tag') || DEFAULT_TAG,
     mode,
     /** One DMA or site, or the whole campaign when undefined. */
-    segment: readSegment(list.get),
+    segment,
+    /** DMAs and sites left out, of the dimensions other than the segment's. */
+    exclude: readExclusions(list.get, segment),
     setTag: (tag: string) => list.setFilter('tag', tag === DEFAULT_TAG ? '' : tag),
     setMode: (next: AttributionMode) => list.setFilter('mode', next === DEFAULT_MODE ? '' : next),
-    setSegment: (next: Segment | null) => list.setFilters(segmentParams(next)),
+    // Exclusions of the picked segment's dimension would no longer apply
+    setSegment: (next: Segment | null) =>
+      list.setFilters({ ...segmentParams(next), ...(next && exclusionParams(next.dimension, [])) }),
+    setExcluded: (dimension: Dimension, keys: string[]) =>
+      list.setFilters(exclusionParams(dimension, keys)),
   }
 }

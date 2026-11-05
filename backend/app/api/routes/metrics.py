@@ -65,8 +65,19 @@ def timeseries(
     site_id: Annotated[
         str | None, Query(max_length=256, description="Only impressions of this site")
     ] = None,
+    exclude_mm_dma: Annotated[
+        list[int] | None, Query(max_length=50, description="Without these DMAs, repeatable")
+    ] = None,
+    exclude_site_id: Annotated[
+        list[str] | None, Query(max_length=50, description="Without these sites, repeatable")
+    ] = None,
 ) -> TimeSeries:
-    """CTR (by fclick) and EvPM of each `tag` per hour or day, campaign-wide or for one segment."""
+    """CTR (by fclick) and EvPM of each `tag` per hour or day, campaign-wide or for one segment.
+
+    `exclude_mm_dma` and `exclude_site_id` drop impressions of those DMAs and sites, also
+    together (`exclude_mm_dma=501&exclude_site_id=nypost.com`); with `mm_dma` only sites can
+    be excluded, with `site_id` only DMAs.
+    """
     tags = list(dict.fromkeys(t.strip() for t in tag or [metrics.CLICK_TAG] if t.strip()))
     if any(len(t) > 32 for t in tags):
         raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Event type is too long")
@@ -74,12 +85,23 @@ def timeseries(
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT, "Filter by either mm_dma or site_id, not both"
         )
+    if (mm_dma is not None and exclude_mm_dma) or (site_id is not None and exclude_site_id):
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
+            "Exclude segments of the other dimension than the selected one",
+        )
+    if any(len(s) > 256 for s in exclude_site_id or []):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Site is too long")
     segment: tuple[Dimension, str] | None = None
     if mm_dma is not None:
         segment = ("mm_dma", str(mm_dma))
     elif site_id is not None:
         segment = ("site_id", site_id)
-    return metrics.timeseries(db, tags, mode, granularity, segment)
+    exclude: dict[Dimension, list[str]] = {
+        "mm_dma": [str(k) for k in exclude_mm_dma or []],
+        "site_id": exclude_site_id or [],
+    }
+    return metrics.timeseries(db, tags, mode, granularity, segment, exclude)
 
 
 @router.get("/aggregates/{dimension}")

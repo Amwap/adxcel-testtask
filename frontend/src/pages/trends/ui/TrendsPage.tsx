@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import { useDmaNames } from '@/entities/dma'
 import { ModeSwitch, SegmentPicker, segmentLabel, useMetricParams } from '@/features/metric-filters'
-import { getEventTypes, getTimeSeries } from '@/shared/api'
+import { getEventTypes, getTimeSeries, type Exclusions } from '@/shared/api'
 import {
   filterAndSort,
   formatDay,
@@ -83,6 +83,17 @@ const FilterIcon = () => (
 )
 
 const HideIcon = () => <Glyph d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+/** `, without 2 DMAs and 1 site`, or nothing when no segment is excluded. */
+function exclusionNote({ mm_dma, site_id }: Exclusions) {
+  const parts = [
+    mm_dma.length && plural(mm_dma.length, 'DMA'),
+    site_id.length && plural(site_id.length, 'site'),
+  ].filter(Boolean)
+  return parts.length ? `, without ${parts.join(' and ')}` : ''
+}
 
 /** A labelled control of the filters column. */
 function FilterField({
@@ -182,7 +193,7 @@ function TagToggle({
 
 export function TrendsPage() {
   const params = useMetricParams()
-  const { mode, segment } = params
+  const { mode, segment, exclude } = params
   const dmaNames = useDmaNames()
   const segmentName = segment?.dimension === 'mm_dma' ? dmaNames?.get(Number(segment.key)) : undefined
   const theme = useChartTheme()
@@ -195,11 +206,17 @@ export function TrendsPage() {
   const showPeaks = params.get('peaks') !== 'cap'
 
   // Every event type comes in one request, so toggling lines never waits on the network
-  const requestKey = [mode, segment?.dimension, segment?.key].join('|')
+  const requestKey = [
+    mode,
+    segment?.dimension,
+    segment?.key,
+    exclude.mm_dma.join(','),
+    exclude.site_id.join(','),
+  ].join('|')
   const { data, error, loading } = useRequest(requestKey, async (signal) => {
     const types = await getEventTypes(signal)
     const tags = types.tags.filter((t) => t !== types.click_tag)
-    const series = await getTimeSeries({ tags, mode, granularity: 'hour', segment }, signal)
+    const series = await getTimeSeries({ tags, mode, granularity: 'hour', segment, exclude }, signal)
     return { clickTag: types.click_tag, tags, series }
   })
 
@@ -311,7 +328,7 @@ export function TrendsPage() {
     <>
       <PageHeader
         title="Trends"
-        description={`${segment ? `${segmentLabel(segment, segmentName)}: CTR` : 'Campaign CTR'} and EvPM over time. Events without a matching impression are excluded.`}
+        description={`${segment ? `${segmentLabel(segment, segmentName)}: CTR` : 'Campaign CTR'} and EvPM over time${exclusionNote(exclude)}. Events without a matching impression are excluded.`}
       />
 
       <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
@@ -338,7 +355,13 @@ export function TrendsPage() {
                 </button>
               </div>
 
-              <SegmentPicker segment={segment} onChange={params.setSegment} stacked />
+              <SegmentPicker
+                segment={segment}
+                onChange={params.setSegment}
+                excluded={exclude}
+                onExcludedChange={params.setExcluded}
+                stacked
+              />
               <ModeSwitch mode={mode} onChange={params.setMode} stacked />
 
               <FilterField label="Resolution">

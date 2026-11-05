@@ -23,6 +23,7 @@ export {
   type Dimension,
   type DmaRegion,
   type EventTypes,
+  type Exclusions,
   type Granularity,
   type MetricPage,
   type MetricRow,

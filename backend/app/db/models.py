@@ -113,7 +113,8 @@ class DataSource(Base):
 class ImpressionRollup(Base):
     """Impression count per value of a dimension (`hour`, `mm_dma`, `site_id`).
 
-    `hour:mm_dma` and `hour:site_id` are hourly series of the single DMA or site in `segment`;
+    `hour:mm_dma` and `hour:site_id` are hourly series of the single DMA or site in `segment`,
+    `hour:dma_site` of a (DMA, site) pair (`501|nypost.com`);
     campaign-wide dimensions have an empty `segment`.
     Rebuilt on every sync, so metric charts and tables never scan the impression log.
     """

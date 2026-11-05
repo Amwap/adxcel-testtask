@@ -152,42 +152,97 @@ def _series_metrics(impressions: int, events: dict[str, int], tags: list[str]) -
     }
 
 
+class _Hourly:
+    """Impressions and events per hour, summed with a sign over several sources."""
+
+    def __init__(self) -> None:
+        self.impressions: dict[str, int] = defaultdict(int)
+        self.events: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    def add(self, impressions, events, sign: int = 1) -> None:
+        for hour, n in impressions:
+            self.impressions[hour] += sign * n
+        for hour, tag, n in events:
+            self.events[hour][tag] += sign * n
+
+
+def _pairs(dmas: list[str], sites: list[str]) -> list[str]:
+    """Segments of the `hour:dma_site` rollup."""
+    return [f"{d}|{s}" for d in dmas for s in sites]
+
+
+def _add_rollups(
+    acc: _Hourly, db: Session, dimension: str, keys: list[str], tags: set[str], mode: Mode, sign=1
+) -> None:
+    """Hourly rollups of `dimension` (`hour`, `hour:mm_dma`, ...) summed over segments `keys`."""
+    imp, ev = ImpressionRollup, EventRollup
+    acc.add(
+        db.execute(
+            select(imp.key, imp.impressions).where(
+                imp.dimension == dimension, imp.segment.in_(keys)
+            )
+        ),
+        db.execute(
+            select(ev.key, ev.tag, ev.events).where(
+                ev.dimension == dimension,
+                ev.segment.in_(keys),
+                ev.mode == mode,
+                ev.tag.in_(tags),
+            )
+        ),
+        sign,
+    )
+
+
 def timeseries(
     db: Session,
     tags: list[str],
     mode: Mode,
     granularity: Granularity,
     segment: tuple[Dimension, str] | None = None,
+    exclude: dict[Dimension, list[str]] | None = None,
 ) -> TimeSeries:
-    """CTR and EvPM of each of `tags` per hour or day, in one pass over the hourly rollups.
+    """CTR and EvPM of each of `tags` per hour or day, from the hourly rollups.
 
-    `segment` narrows the series to one DMA or site, e.g. `("mm_dma", "501")`.
+    `segment` narrows the series to one DMA or site, e.g. `("mm_dma", "501")`;
+    `exclude` drops impressions of the given DMAs and sites (those of the segment's own
+    dimension are ignored). Excluded segments are subtracted by inclusion-exclusion:
+    the rollups of each, with their overlap (a DMA on a site) counted back.
     """
-    dimension, segment_key = ("hour", "") if segment is None else (f"hour:{segment[0]}", segment[1])
+    exclude = exclude or {}
+    dmas = list(dict.fromkeys(exclude.get("mm_dma", [])))
+    sites = list(dict.fromkeys(exclude.get("site_id", [])))
+    wanted = {CLICK_TAG, *tags}
+    acc = _Hourly()
+    if segment is None:
+        _add_rollups(acc, db, "hour", [""], wanted, mode)
+        for dimension, keys in (("mm_dma", dmas), ("site_id", sites)):
+            if keys:
+                _add_rollups(acc, db, f"hour:{dimension}", keys, wanted, mode, sign=-1)
+        if dmas and sites:
+            _add_rollups(acc, db, "hour:dma_site", _pairs(dmas, sites), wanted, mode)
+    else:
+        dimension, key = segment
+        _add_rollups(acc, db, f"hour:{dimension}", [key], wanted, mode)
+        if dimension == "mm_dma" and sites:
+            _add_rollups(acc, db, "hour:dma_site", _pairs([key], sites), wanted, mode, sign=-1)
+        elif dimension == "site_id" and dmas:
+            _add_rollups(acc, db, "hour:dma_site", _pairs(dmas, [key]), wanted, mode, sign=-1)
 
     def bucket(key: str) -> str:
         return key if granularity == "hour" else f"{key[:10]}T00:00:00"
 
     impressions: dict[str, int] = defaultdict(int)
-    for k, n in db.execute(
-        select(ImpressionRollup.key, ImpressionRollup.impressions)
-        .where(ImpressionRollup.dimension == dimension, ImpressionRollup.segment == segment_key)
-        .order_by(ImpressionRollup.key)
-    ):
-        impressions[bucket(k)] += n
-
     events: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     totals: dict[str, int] = defaultdict(int)
-    for k, tag, n in db.execute(
-        select(EventRollup.key, EventRollup.tag, EventRollup.events).where(
-            EventRollup.dimension == dimension,
-            EventRollup.segment == segment_key,
-            EventRollup.mode == mode,
-            EventRollup.tag.in_({CLICK_TAG, *tags}),
-        )
-    ):
-        events[bucket(k)][tag] += n
-        totals[tag] += n
+    # Hours whose every impression is excluded drop out, with their events
+    for hour in sorted(acc.impressions):
+        if acc.impressions[hour] <= 0:
+            continue
+        impressions[bucket(hour)] += acc.impressions[hour]
+        for tag, n in acc.events.get(hour, {}).items():
+            events[bucket(hour)][tag] += n
+            totals[tag] += n
 
     points = [
         TimePoint(ts=ts, **_series_metrics(n, events.get(ts, {}), tags))

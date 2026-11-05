@@ -56,6 +56,8 @@ ROLLUP_DIMENSIONS = {
     # Hourly series of each DMA and site, for trends of one segment
     "hour:mm_dma": (_DMA, _HOUR),
     "hour:site_id": (_SITE, _HOUR),
+    # ... and of each (DMA, site) pair as `501|nypost.com`, to exclude DMAs and sites together
+    "hour:dma_site": (f"{_DMA} || '|' || {_SITE}", _HOUR),
 }
 HOUR_FORMAT = "%Y-%m-%dT%H:00:00"
 
@@ -251,9 +253,9 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
         # Rollups are derived data: an older schema is rebuilt without reloading the CSVs
         rollup = ImpressionRollup.__table__
         stored = {c["name"] for c in inspect(conn).get_columns(rollup.name)}
-        rollups_missing = stored != set(rollup.columns.keys()) or not conn.scalar(
-            select(func.count()).select_from(rollup).limit(1)
-        )
+        rollups_missing = stored != set(rollup.columns.keys()) or set(
+            conn.scalars(select(rollup.c.dimension).distinct())
+        ) != set(ROLLUP_DIMENSIONS)
         if rollups_missing or not all(r.skipped for r in results):
             _link_events(conn)
             _rebuild_rollups(conn)
