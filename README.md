@@ -59,4 +59,5 @@ npm run build
 docker compose up --build     # http://localhost:8080
 ```
 
-nginx во фронтенд-контейнере отдаёт статику и проксирует `/api` на backend.
+Сервис `nginx` собирается из `frontend/` (статика) и берёт единственный конфиг из `nginx/nginx.conf`:
+отдаёт фронтенд и проксирует `/api` на backend. После правки конфига: `docker compose restart nginx`.
