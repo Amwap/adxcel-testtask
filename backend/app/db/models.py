@@ -33,14 +33,17 @@ class Impression(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     reg_time: Mapped[datetime] = mapped_column(DateTime, index=True)
     uid: Mapped[str] = mapped_column(String(36), index=True)
-    fc_imp_chk: Mapped[int]
-    fc_time_chk: Mapped[int]
-    utmtr: Mapped[int]
+    # Every column is indexed: the impressions table can be filtered and sorted by any of them
+    fc_imp_chk: Mapped[int] = mapped_column(index=True)
+    fc_time_chk: Mapped[int] = mapped_column(index=True)
+    utmtr: Mapped[int] = mapped_column(index=True)
     mm_dma: Mapped[int] = mapped_column(index=True)
-    os_name: Mapped[str | None] = mapped_column(String)
+    os_name: Mapped[str | None] = mapped_column(String, index=True)
     model: Mapped[str | None] = mapped_column(String, index=True)
-    hardware: Mapped[str | None] = mapped_column(String)
+    hardware: Mapped[str | None] = mapped_column(String, index=True)
     site_id: Mapped[str] = mapped_column(String, index=True)
+    # Events with this uid, filled on sync
+    event_count: Mapped[int] = mapped_column(default=0, server_default="0", index=True)
 
 
 class Event(Base):
@@ -55,6 +58,8 @@ class Event(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     uid: Mapped[str] = mapped_column(String(36), index=True)
     tag: Mapped[str] = mapped_column(String(32))
+    # Earliest impression with this uid, filled on sync; None when there is none
+    impression_id: Mapped[int | None] = mapped_column(index=True)
 
 
 class Site(Base):
@@ -75,6 +80,18 @@ class DeviceModel(Base):
     __tablename__ = "device_models"
 
     model: Mapped[str] = mapped_column(String, primary_key=True)
+    impressions: Mapped[int]
+
+
+class ImpressionFacet(Base):
+    """Distinct values of the low-cardinality impression columns (`os_name`, `hardware`)
+    with impression counts, rebuilt with `Site`. They become the options of column filters.
+    """
+
+    __tablename__ = "impression_facets"
+
+    field: Mapped[str] = mapped_column(String(16), primary_key=True)
+    value: Mapped[str] = mapped_column(String, primary_key=True)
     impressions: Mapped[int]
 
 

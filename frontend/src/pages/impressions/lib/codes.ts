@@ -19,6 +19,16 @@ const LOCAL_TIME = [
 
 const label = (table: string[]) => (code: number) => table[code] ?? NA
 
+/** Filter options: every code with its label, N/A last. */
+const options = (table: string[]) => [
+  ...table.map((l, code) => ({ value: String(code), label: l })),
+  { value: '-1', label: 'N/A' },
+]
+
 export const priorImpressionsLabel = label(PRIOR_IMPRESSIONS)
 export const sinceLastLabel = label(SINCE_LAST)
 export const localTimeLabel = label(LOCAL_TIME)
+
+export const priorImpressionsOptions = options(PRIOR_IMPRESSIONS)
+export const sinceLastOptions = options(SINCE_LAST)
+export const localTimeOptions = options(LOCAL_TIME)

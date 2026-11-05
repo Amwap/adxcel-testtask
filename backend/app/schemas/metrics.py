@@ -7,7 +7,6 @@ from app.schemas.data import Page
 Mode = Literal["first", "all"]
 Granularity = Literal["hour", "day"]
 Dimension = Literal["mm_dma", "site_id"]
-SortField = Literal["key", "impressions", "clicks", "events", "ctr", "evpm"]
 
 
 class Metrics(BaseModel):

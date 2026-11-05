@@ -5,9 +5,7 @@ type PaginationProps = {
   page: number
   pageSize: number
   total: number
-  pageSizes: readonly number[]
   onPageChange: (page: number) => void
-  onPageSizeChange: (size: number) => void
 }
 
 type PageItem = number | 'gap'
@@ -30,32 +28,36 @@ const navButton =
 const idle = 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
 const current = 'bg-indigo-600 text-white dark:bg-indigo-500'
 
-export function Pagination({
-  page,
-  pageSize,
-  total,
-  pageSizes,
-  onPageChange,
-  onPageSizeChange,
-}: PaginationProps) {
+/** Rows per page; it belongs with the other table-wide parameters above the table. */
+export function PageSizeSelect({
+  value,
+  sizes,
+  onChange,
+}: {
+  value: number
+  sizes: readonly number[]
+  onChange: (size: number) => void
+}) {
+  return (
+    <Select
+      label="Rows per page"
+      value={String(value)}
+      onChange={(e) => onChange(Number(e.target.value))}
+      options={sizes.map((s) => ({ value: String(s), label: `${s} / page` }))}
+    />
+  )
+}
+
+export function Pagination({ page, pageSize, total, onPageChange }: PaginationProps) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
   const from = total === 0 ? 0 : (page - 1) * pageSize + 1
   const to = Math.min(page * pageSize, total)
 
   return (
     <div className="flex flex-col gap-3 border-t border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-slate-800">
-      <div className="flex items-center gap-3 text-sm text-slate-500 dark:text-slate-400">
-        <Select
-          label="Rows per page"
-          value={String(pageSize)}
-          onChange={(e) => onPageSizeChange(Number(e.target.value))}
-          options={pageSizes.map((s) => ({ value: String(s), label: `${s} / page` }))}
-          className="py-1.5"
-        />
-        <span className="tabular-nums">
-          {formatNumber(from)}–{formatNumber(to)} of {formatNumber(total)}
-        </span>
-      </div>
+      <p className="text-sm text-slate-500 tabular-nums dark:text-slate-400">
+        {formatNumber(from)}–{formatNumber(to)} of {formatNumber(total)}
+      </p>
 
       <nav aria-label="Pagination" className="flex flex-wrap items-center gap-1">
         <button

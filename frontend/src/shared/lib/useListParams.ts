@@ -7,7 +7,7 @@ const toPositiveInt = (value: string | null, fallback: number) => {
   return Number.isInteger(n) && n > 0 ? n : fallback
 }
 
-/** Page, page size, search and extra filters kept in the URL, so they survive reloads. */
+/** Page, page size and extra filters kept in the URL, so they survive reloads. */
 export function useListParams() {
   const [params, setParams] = useSearchParams()
   const sizeParam = toPositiveInt(params.get('size'), PAGE_SIZES[0])
@@ -27,11 +27,9 @@ export function useListParams() {
   return {
     page: toPositiveInt(params.get('page'), 1),
     pageSize,
-    q: params.get('q') ?? '',
     get: (name: string) => params.get(name) ?? '',
     setPage: (page: number) => update({ page }, false),
     setPageSize: (size: number) => update({ size: size === PAGE_SIZES[0] ? null : size }),
-    setQuery: (q: string) => update({ q: q.trim() }),
     setFilter: (name: string, value: string) => update({ [name]: value }),
     setFilters: (changes: Record<string, string | null>) => update(changes),
   }

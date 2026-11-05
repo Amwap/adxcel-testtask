@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from sqlalchemy import Integer, and_, cast, func, select
+from sqlalchemy import Integer, and_, cast, column, func, select
 from sqlalchemy.orm import Session, aliased
 
 from app.db import EventRollup, ImpressionRollup
@@ -15,13 +15,23 @@ from app.schemas.metrics import (
     Metrics,
     Mode,
     SeriesMetrics,
-    SortField,
     TimePoint,
     TimeSeries,
 )
-from app.services.data import like_pattern
+from app.services.table import Field, TableQuery
 
 CLICK_TAG = "fclick"
+
+# Columns of `_rollup_query`, filtered and sorted after it is wrapped in a subquery
+_METRIC_FIELDS = {
+    name: Field("number", column(name))
+    for name in ("impressions", "clicks", "events", "ctr", "evpm")
+}
+AGGREGATE_FIELDS: dict[Dimension, dict[str, Field]] = {
+    # DMA codes are numbers stored as text keys
+    "mm_dma": {"key": Field("number", cast(column("key"), Integer)), **_METRIC_FIELDS},
+    "site_id": {"key": Field("text", column("key")), **_METRIC_FIELDS},
+}
 
 
 def _metrics(impressions: int, clicks: int, events: int) -> dict[str, int | float]:
@@ -139,30 +149,20 @@ def aggregate(
     dimension: Dimension,
     tag: str,
     mode: Mode,
+    query: TableQuery,
     *,
     page: int,
     page_size: int,
-    q: str = "",
-    min_impressions: int = 0,
-    sort: SortField = "impressions",
-    descending: bool = True,
 ) -> MetricPage:
-    stmt = _rollup_query(dimension, tag, mode)
-    if q:
-        stmt = stmt.where(ImpressionRollup.key.like(like_pattern(q), escape="\\"))
-    if min_impressions:
-        stmt = stmt.where(ImpressionRollup.impressions >= min_impressions)
-
+    """`query` holds conditions and ordering over `AGGREGATE_FIELDS[dimension]`."""
+    stmt = select(_rollup_query(dimension, tag, mode).subquery()).where(*query.conditions)
     sub = stmt.subquery()
     total = db.scalar(select(func.count()).select_from(sub)) or 0
     totals = _totals(db, stmt)
 
-    column = sub.c[sort]
-    if sort == "key" and dimension == "mm_dma":
-        column = cast(column, Integer)
-    order = column.desc() if descending else column.asc()
+    order_by = query.order_by or [column("impressions").desc()]
     rows = db.execute(
-        select(sub).order_by(order, sub.c.key).offset((page - 1) * page_size).limit(page_size)
+        stmt.order_by(*order_by, column("key")).offset((page - 1) * page_size).limit(page_size)
     )
     items = [MetricRow(key=r.key, **_metrics(r.impressions, r.clicks, r.events)) for r in rows]
     return MetricPage(items=items, total=total, page=page, page_size=page_size, totals=totals)

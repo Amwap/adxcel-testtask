@@ -145,6 +145,7 @@ export function RateChart({
   unit,
   resolution,
   minImpressions,
+  showPeaks,
   theme,
 }: {
   points: ChartPoint[]
@@ -152,10 +153,12 @@ export function RateChart({
   unit: Unit
   resolution: Resolution
   minImpressions: number
+  /** Stretch the axis to fit every value instead of capping the outliers. */
+  showPeaks: boolean
   theme: ChartTheme
 }) {
   const values = series.flatMap((s) => points.map(s.value))
-  const outliers = outlierCap(values)
+  const outliers = showPeaks ? null : outlierCap(values)
   const ticks = niceTicks(outliers ?? Math.max(...values.map((v) => v ?? 0)) * 1.05)
   const top = ticks[ticks.length - 1]
   const cap = outliers === null ? null : top

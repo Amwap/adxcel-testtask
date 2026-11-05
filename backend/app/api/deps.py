@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
 from app.core.security import TokenError, decode_token
 from app.db import User, get_db
+from app.services import table
 
 DbSession = Annotated[Session, Depends(get_db)]
 
@@ -30,3 +31,11 @@ def get_current_user(db: DbSession, token: Annotated[str, Depends(oauth2_scheme)
 
 
 CurrentUser = Annotated[User, Depends(get_current_user)]
+
+
+def table_query(request: Request, fields: dict[str, table.Field]) -> table.TableQuery:
+    """Column filters and sorting of a table endpoint, see `app.services.table`."""
+    try:
+        return table.parse(request.query_params, fields)
+    except table.TableQueryError as e:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, str(e)) from None

@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import Table, delete, func, insert, select, text
+from sqlalchemy import Table, delete, func, insert, literal, select, text, update
 from sqlalchemy.engine import Connection
 
 from app.config import get_settings
@@ -21,6 +21,7 @@ from app.db import (
     Event,
     EventRollup,
     Impression,
+    ImpressionFacet,
     ImpressionRollup,
     Site,
     engine,
@@ -51,6 +52,9 @@ ROLLUP_DIMENSIONS = {
     "site_id": "i.site_id",
 }
 HOUR_FORMAT = "%Y-%m-%dT%H:00:00"
+
+# Impression columns with few distinct values, offered as filter options
+FACET_COLUMNS = (Impression.os_name, Impression.hardware)
 
 
 @dataclass(frozen=True)
@@ -90,6 +94,34 @@ def _rebuild_lookups(conn: Connection) -> None:
                 select(column, func.count()).where(column.is_not(None)).group_by(column),
             )
         )
+    conn.execute(delete(ImpressionFacet))
+    for column in FACET_COLUMNS:
+        conn.execute(
+            insert(ImpressionFacet).from_select(
+                ["field", "value", "impressions"],
+                select(literal(column.key), column, func.count())
+                .where(column.is_not(None))
+                .group_by(column),
+            )
+        )
+
+
+def _link_events(conn: Connection) -> None:
+    """Fill `Impression.event_count` and `Event.impression_id` across the two logs."""
+    conn.execute(update(Impression).where(Impression.event_count > 0).values(event_count=0))
+    conn.execute(
+        text("""
+            UPDATE impressions
+            SET event_count = (SELECT count(*) FROM events e WHERE e.uid = impressions.uid)
+            WHERE uid IN (SELECT uid FROM events)
+        """)
+    )
+    conn.execute(
+        text("""
+            UPDATE events
+            SET impression_id = (SELECT min(id) FROM impressions i WHERE i.uid = events.uid)
+        """)
+    )
 
 
 def _rebuild_rollups(conn: Connection) -> None:
@@ -196,7 +228,10 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
             Base.metadata.create_all(conn, tables=[table])
             rows = _insert_csv(conn, table, path, columns, parse_dates)
             if table is Impression.__table__:
-                Base.metadata.create_all(conn, tables=[Site.__table__, DeviceModel.__table__])
+                Base.metadata.create_all(
+                    conn,
+                    tables=[Site.__table__, DeviceModel.__table__, ImpressionFacet.__table__],
+                )
                 _rebuild_lookups(conn)
             _save_source(conn, table.name, path, rows)
             results.append(SyncResult(table.name, rows, skipped=False))
@@ -205,6 +240,7 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
             select(func.count()).select_from(ImpressionRollup).limit(1)
         )
         if rollups_missing or not all(r.skipped for r in results):
+            _link_events(conn)
             _rebuild_rollups(conn)
 
     if rollups_missing or not all(r.skipped for r in results):

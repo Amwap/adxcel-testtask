@@ -1,7 +1,14 @@
 import { useMemo, type ReactNode } from 'react'
 import { ModeSwitch, useMetricParams } from '@/features/metric-filters'
 import { getEventTypes, getTimeSeries } from '@/shared/api'
-import { formatDay, formatNumber, formatRate, useRequest } from '@/shared/lib'
+import {
+  filterAndSort,
+  formatDay,
+  formatNumber,
+  formatRate,
+  useRequest,
+  useTableState,
+} from '@/shared/lib'
 import {
   Button,
   Card,
@@ -28,6 +35,11 @@ const RESOLUTIONS: { value: Resolution; label: string; title: string }[] = [
   { value: 'rolling', label: '24h rolling', title: 'Each hour shows the trailing 24 hours' },
   { value: 'hour', label: 'Hourly', title: 'Raw hourly buckets' },
   { value: 'day', label: 'Daily', title: 'Calendar days, UTC' },
+]
+
+const PEAKS: { value: 'cap' | 'full'; label: string; title: string }[] = [
+  { value: 'full', label: 'Full scale', title: 'The axis stretches to fit every peak' },
+  { value: 'cap', label: 'Capped', title: 'Outliers are drawn as ▲ at the top so the rest stays readable' },
 ]
 
 const DEFAULT_MIN = 100
@@ -129,6 +141,7 @@ export function TrendsPage() {
   const resolution: Resolution = RESOLUTIONS.some((r) => r.value === resParam) ? resParam : 'rolling'
   const minParam = params.get('min')
   const minImpressions = minParam === '' ? DEFAULT_MIN : Number(minParam) || 0
+  const showPeaks = params.get('peaks') !== 'cap'
 
   // Every event type comes in one request, so toggling lines never waits on the network
   const { data, error, loading } = useRequest(mode, async (signal) => {
@@ -196,6 +209,10 @@ export function TrendsPage() {
     {
       key: 't',
       header: resolution === 'rolling' ? 'Hour (24h window)' : 'Period',
+      hint: 'UTC',
+      width: 220,
+      filter: { type: 'datetime' },
+      value: (r) => r.t,
       cell: (r) =>
         new Date(r.t)
           .toISOString()
@@ -204,19 +221,39 @@ export function TrendsPage() {
       className: 'tabular-nums',
     },
     {
-      key: 'imp',
+      key: 'impressions',
       header: 'Impressions',
+      width: 160,
+      filter: { type: 'number' },
+      value: (r) => r.base,
       cell: (r) => formatNumber(r.base),
       className: num,
     },
-    { key: 'ctr', header: 'CTR', cell: (r) => rate(r.ctr, '%'), className: num },
-    ...tags.map((tag) => ({
-      key: tag,
-      header: `EvPM · ${tag}`,
-      cell: (r: ChartPoint) => rate(r.evpm[tag] ?? null, '‰'),
+    {
+      key: 'ctr',
+      header: 'CTR',
+      hint: 'Percent',
+      width: 110,
+      filter: { type: 'number' },
+      value: (r) => r.ctr,
+      cell: (r) => rate(r.ctr, '%'),
       className: num,
-    })),
+    },
+    ...tags.map(
+      (tag): Column<ChartPoint> => ({
+        key: `evpm_${tag}`,
+        header: `EvPM · ${tag}`,
+        hint: 'Per mille',
+        width: 220,
+        filter: { type: 'number' },
+        value: (r) => r.evpm[tag] ?? null,
+        cell: (r) => rate(r.evpm[tag] ?? null, '‰'),
+        className: num,
+      }),
+    ),
   ]
+  const table = useTableState(tableColumns)
+  const tableRows = filterAndSort(points, tableColumns, table.filters, table.sort)
 
   return (
     <>
@@ -227,11 +264,17 @@ export function TrendsPage() {
 
       <Card className="mb-6 flex flex-col gap-4 p-4">
         <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <div className="flex items-center gap-3">
-            <ModeSwitch mode={mode} onChange={params.setMode} />
-            {loading && data && <Spinner className="size-4 text-indigo-600" />}
-          </div>
+          <ModeSwitch mode={mode} onChange={params.setMode} />
           <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+              <span>Peaks</span>
+              <SegmentedControl
+                label="Peaks"
+                value={showPeaks ? 'full' : 'cap'}
+                options={PEAKS}
+                onChange={(v) => params.setFilter('peaks', v === 'cap' ? v : '')}
+              />
+            </div>
             <SegmentedControl
               label="Resolution"
               value={resolution}
@@ -250,7 +293,7 @@ export function TrendsPage() {
         </div>
 
         {bounds && (
-          <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 dark:border-slate-800">
+          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
             <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
               <span>Period</span>
               <span className="flex items-center gap-2">
@@ -290,6 +333,18 @@ export function TrendsPage() {
                 </Button>
               )}
             </div>
+            <fieldset className="ml-auto flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
+              <legend className="sr-only">Event types</legend>
+              {allTags.map((tag) => (
+                <TagToggle
+                  key={tag}
+                  tag={tag}
+                  color={colorOf(tag)}
+                  checked={tags.includes(tag)}
+                  onChange={(on) => toggleTag(tag, on)}
+                />
+              ))}
+            </fieldset>
           </div>
         )}
       </Card>
@@ -340,30 +395,19 @@ export function TrendsPage() {
                 unit="%"
                 resolution={resolution}
                 minImpressions={minImpressions}
+                showPeaks={showPeaks}
                 theme={theme}
               />
 
               <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
-                <ChartHeader title="EvPM, ‰" formula="1000 × (type + v·type) / impressions">
-                  <fieldset className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                    <legend className="sr-only">Event types</legend>
-                    {allTags.map((tag) => (
-                      <TagToggle
-                        key={tag}
-                        tag={tag}
-                        color={colorOf(tag)}
-                        checked={tags.includes(tag)}
-                        onChange={(on) => toggleTag(tag, on)}
-                      />
-                    ))}
-                  </fieldset>
-                </ChartHeader>
+                <ChartHeader title="EvPM, ‰" formula="1000 × (type + v·type) / impressions" />
                 <RateChart
                   points={points}
                   series={evpmSeries}
                   unit="‰"
                   resolution={resolution}
                   minImpressions={minImpressions}
+                  showPeaks={showPeaks}
                   theme={theme}
                 />
               </div>
@@ -383,12 +427,16 @@ export function TrendsPage() {
               <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700 select-none dark:text-slate-300">
                 Data table
               </summary>
-              <div className="max-h-96 overflow-y-auto border-t border-slate-200 dark:border-slate-800">
+              <div className="border-t border-slate-200 dark:border-slate-800">
                 <DataTable
+                  id="trends"
                   columns={tableColumns}
-                  rows={points}
+                  state={table}
+                  rows={tableRows}
                   rowKey={(r) => r.t}
                   loading={loading}
+                  empty="No rows match the filters."
+                  scrollClassName="max-h-96"
                 />
               </div>
             </details>

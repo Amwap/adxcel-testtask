@@ -1,11 +1,10 @@
 import { apiGet } from './client'
-import type { Page } from './data'
+import { pageSearch, type Page, type PageQuery } from './data'
 
 /** How events of a uid with several impressions are attributed. */
 export type AttributionMode = 'first' | 'all'
 export type Granularity = 'hour' | 'day'
 export type Dimension = 'mm_dma' | 'site_id'
-export type MetricSortField = 'key' | 'impressions' | 'clicks' | 'events' | 'ctr' | 'evpm'
 
 export type Metrics = {
   impressions: number
@@ -46,14 +45,7 @@ export type EventTypes = { tags: string[]; click_tag: string }
 
 export type MetricQuery = { tag: string; mode: AttributionMode }
 
-export type AggregateQuery = MetricQuery & {
-  page: number
-  pageSize: number
-  q?: string
-  minImpressions?: number
-  sort?: MetricSortField
-  order?: 'asc' | 'desc'
-}
+export type AggregateQuery = MetricQuery & PageQuery
 
 const toSearch = (params: Record<string, string | number | string[] | undefined>) =>
   new URLSearchParams(
@@ -72,17 +64,13 @@ export const getTimeSeries = ({ tags, mode, granularity }: TimeSeriesQuery, sign
     signal,
   })
 
-export const getAggregates = (dimension: Dimension, query: AggregateQuery, signal?: AbortSignal) =>
-  apiGet<MetricPage>(
-    `/metrics/aggregates/${dimension}?${toSearch({
-      tag: query.tag,
-      mode: query.mode,
-      page: query.page,
-      page_size: query.pageSize,
-      q: query.q,
-      min_impressions: query.minImpressions || undefined,
-      sort: query.sort,
-      order: query.order,
-    })}`,
-    { signal },
-  )
+export const getAggregates = (
+  dimension: Dimension,
+  { tag, mode, ...page }: AggregateQuery,
+  signal?: AbortSignal,
+) => {
+  const search = pageSearch(page)
+  search.set('tag', tag)
+  search.set('mode', mode)
+  return apiGet<MetricPage>(`/metrics/aggregates/${dimension}?${search}`, { signal })
+}

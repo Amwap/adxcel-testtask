@@ -66,29 +66,78 @@ def test_impressions_pagination(client: TestClient, auth_headers: dict[str, str]
     assert body["items"][0]["os_name"] is None
 
 
+def get_uids(client: TestClient, headers: dict[str, str], path: str, **params) -> list[str]:
+    res = client.get(f"/api/{path}", params=params, headers=headers)
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["total"] == len(body["items"])
+    return [i["uid"] for i in body["items"]]
+
+
 @pytest.mark.parametrize(
-    ("q", "uids"),
+    ("params", "uids"),
     [
-        ("forbes", ["aaa-2", "bbb-1"]),  # site substring
-        ("AAA", ["aaa-1", "aaa-2"]),  # uid prefix, case-insensitive
-        ("phone xr", ["aaa-1"]),  # device model substring
-        ("%", []),  # LIKE wildcards are literal
-        ("nothing", []),
+        ({"site_id": "forbes"}, ["aaa-2", "bbb-1"]),  # substring
+        ({"uid": "AAA"}, ["aaa-1", "aaa-2"]),  # prefix, case-insensitive
+        ({"uid": "-1"}, []),  # prefix only
+        ({"model": "phone xr"}, ["aaa-1"]),
+        ({"site_id": "%"}, []),  # LIKE wildcards are literal
+        ({"mm_dma_min": 600, "mm_dma_max": 612}, ["aaa-2", "bbb-1"]),
+        (
+            {"reg_time_from": "2021-07-21T19:25:50", "reg_time_to": "2021-07-21T19:26"},
+            ["aaa-2", "bbb-1"],
+        ),
+        ({"reg_time_to": "2021-07-20"}, []),
+        ({"os_name": ["Android", "Symbian"]}, ["bbb-1"]),
+        ({"fc_imp_chk": ["-1", "1"]}, ["bbb-1", "ccc-1"]),
+        ({"events": "vcontent"}, ["bbb-1"]),
+        ({"events": ["fclick", "vcontent"]}, ["aaa-2", "bbb-1"]),
+        ({"site_id": "forbes", "os_name": "iOS"}, ["aaa-2"]),  # conditions combine
     ],
 )
-def test_impressions_search(
-    client: TestClient, auth_headers: dict[str, str], q: str, uids: list[str]
+def test_impressions_filters(
+    client: TestClient, auth_headers: dict[str, str], params: dict, uids: list[str]
 ) -> None:
-    body = client.get("/api/impressions", params={"q": q}, headers=auth_headers).json()
-    assert [i["uid"] for i in body["items"]] == uids
-    assert body["total"] == len(uids)
+    assert get_uids(client, auth_headers, "impressions", **params) == uids
+
+
+@pytest.mark.parametrize(
+    ("params", "uids"),
+    [
+        ({"sort": "mm_dma"}, ["ccc-1", "aaa-1", "aaa-2", "bbb-1"]),  # ties keep log order
+        ({"sort": "mm_dma", "order": "desc"}, ["aaa-2", "bbb-1", "aaa-1", "ccc-1"]),
+        ({"sort": "events", "order": "desc"}, ["aaa-2", "bbb-1", "aaa-1", "ccc-1"]),
+        ({"sort": "site_id", "os_name": "iOS"}, ["aaa-1", "aaa-2"]),
+    ],
+)
+def test_impressions_sort(
+    client: TestClient, auth_headers: dict[str, str], params: dict, uids: list[str]
+) -> None:
+    assert get_uids(client, auth_headers, "impressions", **params) == uids
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"mm_dma_min": "abc"},
+        {"mm_dma_max": "inf"},
+        {"reg_time_from": "yesterday"},
+        {"fc_imp_chk": "x"},
+        {"sort": "password"},
+        {"sort": "uid", "order": "up"},
+        {"site_id": "x" * 101},
+    ],
+)
+def test_impressions_reject_bad_filters(
+    client: TestClient, auth_headers: dict[str, str], params: dict
+) -> None:
+    res = client.get("/api/impressions", params=params, headers=auth_headers)
+    assert res.status_code == 422
 
 
 def test_impressions_include_events(client: TestClient, auth_headers: dict[str, str]) -> None:
-    items = client.get("/api/impressions", params={"q": "aaa-2"}, headers=auth_headers).json()[
-        "items"
-    ]
-    assert items[0]["events"] == ["fclick", "registration"]
+    res = client.get("/api/impressions", params={"uid": "aaa-2"}, headers=auth_headers)
+    assert res.json()["items"][0]["events"] == ["fclick", "registration"]
 
 
 def test_events_filter_and_join(client: TestClient, auth_headers: dict[str, str]) -> None:
@@ -98,8 +147,24 @@ def test_events_filter_and_join(client: TestClient, auth_headers: dict[str, str]
     assert by_uid["aaa-2"]["site_id"] == "www.forbes.com"
     assert by_uid["zzz-9"]["site_id"] is None  # event without an impression
 
-    body = client.get("/api/events", params={"q": "bbb"}, headers=auth_headers).json()
-    assert [e["tag"] for e in body["items"]] == ["vcontent"]
+    assert get_uids(client, auth_headers, "events", uid="bbb") == ["bbb-1"]
+    assert get_uids(client, auth_headers, "events", site_id="FORBES", tag="vcontent") == ["bbb-1"]
+    assert get_uids(
+        client, auth_headers, "events", reg_time_from="2021-07-21T19:26", sort="uid"
+    ) == ["bbb-1"]
+    # Events without an impression have no time and come last in descending order
+    assert get_uids(client, auth_headers, "events", sort="reg_time", order="desc") == [
+        "bbb-1",
+        "aaa-2",
+        "aaa-2",
+        "zzz-9",
+    ]
+
+
+def test_summary_facets(client: TestClient, auth_headers: dict[str, str]) -> None:
+    facets = client.get("/api/summary", headers=auth_headers).json()["impression_facets"]
+    assert facets["os_name"] == [{"value": "iOS", "count": 2}, {"value": "Android", "count": 1}]
+    assert facets["hardware"] == [{"value": "Mobile Phone", "count": 3}]
 
 
 def test_page_size_is_limited(client: TestClient, auth_headers: dict[str, str]) -> None:

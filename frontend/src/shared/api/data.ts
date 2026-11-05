@@ -2,7 +2,8 @@ import { apiGet } from './client'
 
 export type Page<T> = { items: T[]; total: number; page: number; page_size: number }
 
-export type PageQuery = { page: number; pageSize: number; q?: string }
+/** `filters` are column filter and sort parameters, as built by `useTableState`. */
+export type PageQuery = { page: number; pageSize: number; filters?: [string, string][] }
 
 export type Impression = {
   id: number
@@ -32,19 +33,17 @@ export type DataSource = { table: string; file_name: string; rows: number; synce
 export type DatasetSummary = {
   sources: DataSource[]
   event_tags: { tag: string; count: number }[]
+  /** Distinct values of low-cardinality impression columns, e.g. `os_name`. */
+  impression_facets: Record<string, { value: string; count: number }[]>
 }
 
-function toSearch({ page, pageSize, q, ...rest }: PageQuery & Record<string, unknown>) {
-  const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
-  if (q) params.set('q', q)
-  for (const [k, v] of Object.entries(rest)) if (v) params.set(k, String(v))
-  return params.toString()
-}
+export const pageSearch = ({ page, pageSize, filters = [] }: PageQuery) =>
+  new URLSearchParams([['page', String(page)], ['page_size', String(pageSize)], ...filters])
 
 export const getSummary = (signal?: AbortSignal) => apiGet<DatasetSummary>('/summary', { signal })
 
 export const getImpressions = (query: PageQuery, signal?: AbortSignal) =>
-  apiGet<Page<Impression>>(`/impressions?${toSearch(query)}`, { signal })
+  apiGet<Page<Impression>>(`/impressions?${pageSearch(query)}`, { signal })
 
-export const getEvents = (query: PageQuery & { tag?: string }, signal?: AbortSignal) =>
-  apiGet<Page<AdEvent>>(`/events?${toSearch(query)}`, { signal })
+export const getEvents = (query: PageQuery, signal?: AbortSignal) =>
+  apiGet<Page<AdEvent>>(`/events?${pageSearch(query)}`, { signal })

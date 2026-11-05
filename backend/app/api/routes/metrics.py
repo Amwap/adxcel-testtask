@@ -1,15 +1,14 @@
-from typing import Annotated, Literal
+from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, HTTPException, Query, Request, status
 
-from app.api.deps import CurrentUser, DbSession
+from app.api.deps import CurrentUser, DbSession, table_query
 from app.schemas.metrics import (
     Dimension,
     EventTypes,
     Granularity,
     MetricPage,
     Mode,
-    SortField,
     TimeSeries,
 )
 from app.services import metrics
@@ -49,27 +48,18 @@ def timeseries(
 @router.get("/aggregates/{dimension}")
 def aggregates(
     dimension: Dimension,
+    request: Request,
     db: DbSession,
     _user: CurrentUser,
     tag: Tag = metrics.CLICK_TAG,
     mode: ModeParam = "first",
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 25,
-    q: Annotated[str, Query(max_length=100)] = "",
-    min_impressions: Annotated[int, Query(ge=0)] = 0,
-    sort: SortField = "impressions",
-    order: Literal["asc", "desc"] = "desc",
 ) -> MetricPage:
-    """Impressions, CTR and EvPM per `mm_dma` or `site_id`. `q` filters by substring."""
-    return metrics.aggregate(
-        db,
-        dimension,
-        tag,
-        mode,
-        page=page,
-        page_size=page_size,
-        q=q.strip(),
-        min_impressions=min_impressions,
-        sort=sort,
-        descending=order == "desc",
-    )
+    """Impressions, CTR and EvPM per `mm_dma` or `site_id`, by impressions descending.
+
+    Filter and sort by any column (see `app.services.table` for the parameters):
+    `key` (number for DMA, text for site), `impressions`, `clicks`, `events`, `ctr`, `evpm`.
+    """
+    query = table_query(request, metrics.AGGREGATE_FIELDS[dimension])
+    return metrics.aggregate(db, dimension, tag, mode, query, page=page, page_size=page_size)

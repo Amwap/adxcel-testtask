@@ -53,6 +53,13 @@ class TagCount(BaseModel):
     count: int
 
 
+class ValueCount(BaseModel):
+    value: str
+    count: int
+
+
 class DatasetSummary(BaseModel):
     sources: list[DataSourceRead]
     event_tags: list[TagCount]
+    # Distinct values of low-cardinality impression columns, e.g. {"os_name": [...]}
+    impression_facets: dict[str, list[ValueCount]]

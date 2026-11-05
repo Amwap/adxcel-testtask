@@ -24,7 +24,6 @@ export {
   type MetricPage,
   type MetricRow,
   type Metrics,
-  type MetricSortField,
   type SeriesMetrics,
   type TimePoint,
   type TimeSeries,

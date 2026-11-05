@@ -129,16 +129,41 @@ def test_aggregate_sort_search_and_paging(client: TestClient, auth_headers: dict
     assert [r["key"] for r in body["items"]] == ["s1.com"]
     assert body["total"] == 2
     body = get(
-        client, auth_headers, "/aggregates/site_id", mode="all", sort="ctr", page=2, page_size=1
+        client,
+        auth_headers,
+        "/aggregates/site_id",
+        mode="all",
+        sort="ctr",
+        order="desc",
+        page=2,
+        page_size=1,
     )
     assert [r["key"] for r in body["items"]] == ["s1.com"]
 
-    body = get(client, auth_headers, "/aggregates/site_id", q="s1")
+    body = get(client, auth_headers, "/aggregates/site_id", key="S1")
     assert [r["key"] for r in body["items"]] == ["s1.com"]
     assert body["totals"]["impressions"] == 2
 
-    body = get(client, auth_headers, "/aggregates/site_id", min_impressions=3)
+    body = get(client, auth_headers, "/aggregates/site_id", impressions_min=3)
     assert body["items"] == []
+
+
+def test_aggregate_column_filters(client: TestClient, auth_headers: dict) -> None:
+    # mode=all: DMA 500 has 2/2 clicks (100%), DMA 600 has 1/2 (50%)
+    body = get(client, auth_headers, "/aggregates/mm_dma", mode="all", ctr_max=60)
+    assert [r["key"] for r in body["items"]] == ["600"]
+    assert body["totals"]["clicks"] == 1
+
+    body = get(client, auth_headers, "/aggregates/mm_dma", key_min=550)
+    assert [r["key"] for r in body["items"]] == ["600"]
+
+    body = get(client, auth_headers, "/aggregates/mm_dma", sort="key", order="desc")
+    assert [r["key"] for r in body["items"]] == ["600", "500"]
+
+    res = client.get(
+        "/api/metrics/aggregates/mm_dma", params={"key_min": "x"}, headers=auth_headers
+    )
+    assert res.status_code == 422
 
 
 def test_aggregate_rejects_unknown_dimension(client: TestClient, auth_headers: dict) -> None:
