@@ -46,3 +46,11 @@ export const EventsIcon = (p: IconProps) => (
 export const MenuIcon = (p: IconProps) => <Icon {...p} d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5" />
 
 export const CloseIcon = (p: IconProps) => <Icon {...p} d="M6 18 18 6M6 6l12 12" />
+
+export const CollapseIcon = (p: IconProps) => (
+  <Icon {...p} d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5" />
+)
+
+export const ExpandIcon = (p: IconProps) => (
+  <Icon {...p} d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+)

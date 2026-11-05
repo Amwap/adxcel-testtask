@@ -47,7 +47,8 @@ function toPoint(t: number, impressions: number, c: Counts, tags: string[], hidd
 /**
  * Turns the hourly series into chart points. Rates are always ratios of sums over the
  * bucket or window, never averages of rates, so quiet hours weigh as little as they should.
- * A bucket with fewer than `minImpressions` of its own keeps its place but has no rates.
+ * A bucket with fewer than `minImpressions` behind its rates (its own, or the window's when
+ * rolling) keeps its place but has no rates.
  */
 export function buildPoints(
   hourly: TimePoint[],
@@ -89,7 +90,7 @@ function bucket(
   return rows.map((p) => {
     add(window, p)
     while (rows[start].t <= p.t - DAY) add(window, rows[start++], -1)
-    return toPoint(p.t, p.impressions, window, tags, p.impressions < minImpressions)
+    return toPoint(p.t, p.impressions, window, tags, window.impressions < minImpressions)
   })
 }
 

@@ -6,7 +6,9 @@ import { ThemeSwitcher } from '@/features/theme-switcher'
 import {
   AggregatesIcon,
   CloseIcon,
+  CollapseIcon,
   EventsIcon,
+  ExpandIcon,
   ImpressionsIcon,
   MenuIcon,
   OverviewIcon,
@@ -23,23 +25,50 @@ const NAV: NavItem[] = [
   { to: '/events', label: 'Events', icon: EventsIcon },
 ]
 
-function Brand() {
+function Brand({ compact = false }: { compact?: boolean }) {
   return (
     <div className="flex items-center gap-2.5">
-      <img src="/favicon.svg" alt="" className="size-7" />
-      <span className="font-semibold text-slate-900 dark:text-white">Campaign analytics</span>
+      <img src="/favicon.svg" alt={compact ? 'Campaign analytics' : ''} className="size-7 shrink-0" />
+      {!compact && (
+        <span className="truncate font-semibold text-slate-900 dark:text-white">Campaign analytics</span>
+      )}
     </div>
   )
 }
 
-function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
+const iconButton =
+  'shrink-0 cursor-pointer rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+
+type SidebarContentProps = {
+  onNavigate?: () => void
+  /** Icons only: labels move to tooltips. */
+  collapsed?: boolean
+  /** Shown on the desktop sidebar only; the drawer has its own close button. */
+  onToggle?: () => void
+}
+
+function SidebarContent({ onNavigate, collapsed = false, onToggle }: SidebarContentProps) {
   const session = useSession()
 
   return (
-    <div className="flex h-full flex-col gap-6 px-4 py-5">
-      <div className="hidden px-2 lg:block">
-        <Brand />
-      </div>
+    <div className={`flex h-full flex-col gap-6 py-5 ${collapsed ? 'px-2' : 'px-4'}`}>
+      {onToggle && (
+        <div
+          className={`flex gap-2 ${collapsed ? 'flex-col items-center' : 'items-center justify-between px-2'}`}
+        >
+          <Brand compact={collapsed} />
+          <button
+            type="button"
+            onClick={onToggle}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!collapsed}
+            className={iconButton}
+          >
+            {collapsed ? <ExpandIcon className="size-4" /> : <CollapseIcon className="size-4" />}
+          </button>
+        </div>
+      )}
 
       <nav aria-label="Main" className="flex-1">
         <ul className="space-y-1">
@@ -49,8 +78,11 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 to={to}
                 end={to === '/'}
                 onClick={onNavigate}
+                title={collapsed ? label : undefined}
                 className={({ isActive }) =>
-                  `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                  `flex items-center gap-3 rounded-lg py-2 text-sm font-medium transition-colors ${
+                    collapsed ? 'justify-center px-0' : 'px-3'
+                  } ${
                     isActive
                       ? 'bg-indigo-50 text-indigo-700 dark:bg-indigo-500/10 dark:text-indigo-300'
                       : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
@@ -58,25 +90,42 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
                 }
               >
                 <Icon className="size-5 shrink-0" />
-                {label}
+                <span className={collapsed ? 'sr-only' : ''}>{label}</span>
               </NavLink>
             </li>
           ))}
         </ul>
       </nav>
 
-      <div className="flex items-center justify-between gap-3 px-2">
-        <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Theme</span>
-        <ThemeSwitcher />
-      </div>
+      {collapsed ? (
+        <div className="flex justify-center">
+          <ThemeSwitcher vertical />
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3 px-2">
+          <span className="text-sm font-medium text-slate-500 dark:text-slate-400">Theme</span>
+          <ThemeSwitcher />
+        </div>
+      )}
 
-      <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-2 pt-4 dark:border-slate-800">
+      <div
+        className={`flex gap-3 border-t border-slate-200 pt-4 dark:border-slate-800 ${
+          collapsed ? 'flex-col items-center' : 'items-center justify-between px-2'
+        }`}
+      >
         {session.status === 'authenticated' && (
           <div className="flex min-w-0 items-center gap-2.5">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700 uppercase dark:bg-indigo-500/20 dark:text-indigo-300">
+            <span
+              title={collapsed ? session.user.username : undefined}
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-indigo-100 text-sm font-semibold text-indigo-700 uppercase dark:bg-indigo-500/20 dark:text-indigo-300"
+            >
               {session.user.username.slice(0, 1)}
             </span>
-            <span className="truncate text-sm font-medium text-slate-700 dark:text-slate-300">
+            <span
+              className={
+                collapsed ? 'sr-only' : 'truncate text-sm font-medium text-slate-700 dark:text-slate-300'
+              }
+            >
               {session.user.username}
             </span>
           </div>
@@ -87,8 +136,14 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
   )
 }
 
+type SidebarProps = {
+  /** Desktop only: the sidebar shrinks to a column of icons. */
+  collapsed: boolean
+  onCollapsedChange: (collapsed: boolean) => void
+}
+
 /** Fixed sidebar on large screens, a drawer behind a menu button on small ones. */
-export function Sidebar() {
+export function Sidebar({ collapsed, onCollapsedChange }: SidebarProps) {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!open) return
@@ -132,8 +187,12 @@ export function Sidebar() {
         </div>
       )}
 
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-64 border-r border-slate-200 bg-white lg:block dark:border-slate-800 dark:bg-slate-900">
-        <SidebarContent />
+      <aside
+        className={`fixed inset-y-0 left-0 z-20 hidden overflow-x-hidden overflow-y-auto border-r border-slate-200 bg-white transition-[width] lg:block dark:border-slate-800 dark:bg-slate-900 ${
+          collapsed ? 'w-16' : 'w-64'
+        }`}
+      >
+        <SidebarContent collapsed={collapsed} onToggle={() => onCollapsedChange(!collapsed)} />
       </aside>
     </>
   )

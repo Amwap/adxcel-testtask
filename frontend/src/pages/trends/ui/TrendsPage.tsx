@@ -8,10 +8,10 @@ import {
   formatNumber,
   formatRate,
   useRequest,
+  useStoredFlag,
   useTableState,
 } from '@/shared/lib'
 import {
-  Button,
   Card,
   DataTable,
   PageHeader,
@@ -56,7 +56,54 @@ const num = 'text-right tabular-nums'
 const rate = (v: number | null, unit: '%' | '‰') => (v === null ? '—' : formatRate(v, unit))
 
 const dateInput =
-  'rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-slate-300 ring-inset focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-slate-900 dark:text-white dark:ring-slate-700 dark:[color-scheme:dark]'
+  'w-full min-w-0 rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 ring-1 ring-slate-300 ring-inset focus:ring-2 focus:ring-indigo-600 focus:outline-none dark:bg-slate-900 dark:text-white dark:ring-slate-700 dark:[color-scheme:dark]'
+
+const iconButton =
+  'shrink-0 cursor-pointer rounded-lg p-1.5 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-indigo-600 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white'
+
+function Glyph({ d }: { d: string }) {
+  return (
+    <svg
+      className="size-4 shrink-0"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d={d} />
+    </svg>
+  )
+}
+
+const FilterIcon = () => (
+  <Glyph d="M12 3c2.76 0 5.46.23 8.08.68.53.09.92.55.92 1.09v1.04c0 .6-.24 1.17-.66 1.6l-5.68 5.68a2.25 2.25 0 0 0-.66 1.59v2.93a2.25 2.25 0 0 1-1.24 2.01L9.75 21v-6.57c0-.6-.24-1.17-.66-1.6L3.41 7.16A2.25 2.25 0 0 1 2.75 5.57V4.77c0-.54.39-1 .92-1.09A47.6 47.6 0 0 1 12 3Z" />
+)
+
+const HideIcon = () => <Glyph d="m5.25 4.5 7.5 7.5-7.5 7.5m6-15 7.5 7.5-7.5 7.5" />
+
+/** A labelled control of the filters column. */
+function FilterField({
+  label,
+  action,
+  children,
+}: {
+  label: string
+  action?: ReactNode
+  children: ReactNode
+}) {
+  return (
+    <div className="flex flex-col gap-2 text-sm text-slate-600 dark:text-slate-400">
+      <div className="flex items-center justify-between gap-2">
+        <span>{label}</span>
+        {action}
+      </div>
+      {children}
+    </div>
+  )
+}
 
 function StatTile({
   label,
@@ -139,6 +186,7 @@ export function TrendsPage() {
   const dmaNames = useDmaNames()
   const segmentName = segment?.dimension === 'mm_dma' ? dmaNames?.get(Number(segment.key)) : undefined
   const theme = useChartTheme()
+  const [filtersOpen, setFiltersOpen] = useStoredFlag('trends-filters-open', true)
 
   const resParam = params.get('res') as Resolution
   const resolution: Resolution = RESOLUTIONS.some((r) => r.value === resParam) ? resParam : 'rolling'
@@ -266,190 +314,242 @@ export function TrendsPage() {
         description={`${segment ? `${segmentLabel(segment, segmentName)}: CTR` : 'Campaign CTR'} and EvPM over time. Events without a matching impression are excluded.`}
       />
 
-      <Card className="mb-6 flex flex-col gap-4 p-4">
-        <div className="flex flex-col gap-3 lg:flex-row lg:flex-wrap lg:items-center lg:justify-between">
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-3">
-            <SegmentPicker segment={segment} onChange={params.setSegment} />
-            <ModeSwitch mode={mode} onChange={params.setMode} />
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-              <span>Peaks</span>
-              <SegmentedControl
-                label="Peaks"
-                value={showPeaks ? 'full' : 'cap'}
-                options={PEAKS}
-                onChange={(v) => params.setFilter('peaks', v === 'cap' ? v : '')}
-              />
-            </div>
-            <SegmentedControl
-              label="Resolution"
-              value={resolution}
-              options={RESOLUTIONS}
-              onChange={(r) => params.setFilter('res', r === 'rolling' ? '' : r)}
-            />
-            <Select
-              label="Low-volume buckets"
-              value={String(minImpressions)}
-              onChange={(e) =>
-                params.setFilter('min', Number(e.target.value) === DEFAULT_MIN ? '' : e.target.value)
-              }
-              options={MIN_IMPRESSIONS}
-            />
-          </div>
-        </div>
+      <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
+        <aside
+          aria-label="Filters"
+          className={`lg:sticky lg:top-8 lg:order-last lg:shrink-0 ${filtersOpen ? 'lg:w-80' : ''}`}
+        >
+          {filtersOpen ? (
+            <Card className="flex flex-col gap-5 p-4 lg:max-h-[calc(100vh-4rem)] lg:overflow-y-auto">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="flex items-center gap-2 text-sm font-semibold">
+                  <FilterIcon />
+                  Filters
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setFiltersOpen(false)}
+                  title="Hide filters"
+                  aria-label="Hide filters"
+                  aria-expanded={true}
+                  className={iconButton}
+                >
+                  <HideIcon />
+                </button>
+              </div>
 
-        {bounds && (
-          <div className="flex flex-wrap items-center gap-x-8 gap-y-3 border-t border-slate-100 pt-4 dark:border-slate-800">
-            <div className="flex flex-wrap items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
-              <span>Period</span>
-              <span className="flex items-center gap-2">
-                <input
-                  type="date"
-                  aria-label="From"
-                  className={dateInput}
-                  min={toDateInput(bounds.first)}
-                  max={toDateInput(bounds.last)}
-                  value={toDateInput(range?.from ?? bounds.first) || toDateInput(bounds.first)}
-                  onChange={(e) =>
-                    setPeriod({
-                      from: e.target.value ? Date.parse(`${e.target.value}T00:00:00Z`) : -Infinity,
-                      to: range?.to ?? Infinity,
-                    })
-                  }
+              <SegmentPicker segment={segment} onChange={params.setSegment} stacked />
+              <ModeSwitch mode={mode} onChange={params.setMode} stacked />
+
+              <FilterField label="Resolution">
+                <SegmentedControl
+                  label="Resolution"
+                  layout="fill"
+                  value={resolution}
+                  options={RESOLUTIONS}
+                  onChange={(r) => params.setFilter('res', r === 'rolling' ? '' : r)}
                 />
-                –
-                <input
-                  type="date"
-                  aria-label="To"
-                  className={dateInput}
-                  min={toDateInput(bounds.first)}
-                  max={toDateInput(bounds.last)}
-                  value={toDateInput(range?.to ?? bounds.last) || toDateInput(bounds.last)}
-                  onChange={(e) =>
-                    setPeriod({
-                      from: range?.from ?? -Infinity,
-                      to: e.target.value ? Date.parse(`${e.target.value}T23:00:00Z`) : Infinity,
-                    })
-                  }
+              </FilterField>
+
+              <FilterField label="Peaks">
+                <SegmentedControl
+                  label="Peaks"
+                  layout="fill"
+                  value={showPeaks ? 'full' : 'cap'}
+                  options={PEAKS}
+                  onChange={(v) => params.setFilter('peaks', v === 'cap' ? v : '')}
                 />
-              </span>
-              {range && (
-                <Button variant="secondary" className="px-3 py-2" onClick={() => setPeriod(null)}>
-                  All time
-                </Button>
+              </FilterField>
+
+              <FilterField label="Low-volume buckets">
+                <Select
+                  label="Low-volume buckets"
+                  className="w-full"
+                  value={String(minImpressions)}
+                  onChange={(e) =>
+                    params.setFilter('min', Number(e.target.value) === DEFAULT_MIN ? '' : e.target.value)
+                  }
+                  options={MIN_IMPRESSIONS}
+                />
+              </FilterField>
+
+              {bounds && (
+                <FilterField
+                  label="Period"
+                  action={
+                    range && (
+                      <button
+                        type="button"
+                        onClick={() => setPeriod(null)}
+                        className="cursor-pointer text-xs font-medium text-indigo-600 hover:text-indigo-500 dark:text-indigo-400"
+                      >
+                        All time
+                      </button>
+                    )
+                  }
+                >
+                  <div className="grid grid-cols-[auto_1fr] items-center gap-2">
+                    <span className="text-xs">From</span>
+                    <input
+                      type="date"
+                      aria-label="From"
+                      className={dateInput}
+                      min={toDateInput(bounds.first)}
+                      max={toDateInput(bounds.last)}
+                      value={toDateInput(range?.from ?? bounds.first) || toDateInput(bounds.first)}
+                      onChange={(e) =>
+                        setPeriod({
+                          from: e.target.value ? Date.parse(`${e.target.value}T00:00:00Z`) : -Infinity,
+                          to: range?.to ?? Infinity,
+                        })
+                      }
+                    />
+                    <span className="text-xs">To</span>
+                    <input
+                      type="date"
+                      aria-label="To"
+                      className={dateInput}
+                      min={toDateInput(bounds.first)}
+                      max={toDateInput(bounds.last)}
+                      value={toDateInput(range?.to ?? bounds.last) || toDateInput(bounds.last)}
+                      onChange={(e) =>
+                        setPeriod({
+                          from: range?.from ?? -Infinity,
+                          to: e.target.value ? Date.parse(`${e.target.value}T23:00:00Z`) : Infinity,
+                        })
+                      }
+                    />
+                  </div>
+                </FilterField>
               )}
-            </div>
-            <fieldset className="ml-auto flex flex-wrap items-center justify-end gap-x-4 gap-y-2">
-              <legend className="sr-only">Event types</legend>
-              {allTags.map((tag) => (
-                <TagToggle
-                  key={tag}
-                  tag={tag}
-                  color={colorOf(tag)}
-                  checked={tags.includes(tag)}
-                  onChange={(on) => toggleTag(tag, on)}
-                />
-              ))}
-            </fieldset>
-          </div>
-        )}
-      </Card>
 
-      {error && <p className="mb-4 text-sm text-red-600 dark:text-red-400">{error.message}</p>}
-
-      {!data || !totals ? (
-        !error && <Spinner className="mx-auto mt-16 size-6 text-indigo-600" />
-      ) : (
-        <>
-          <div className="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatTile
-              label="Impressions"
-              value={formatNumber(totals.impressions)}
-              hint={
-                range && points.length
-                  ? `${formatDay(points[0].t)} – ${formatDay(points[points.length - 1].t)}`
-                  : `${data.series.points.length} hours with impressions`
-              }
-            />
-            <StatTile
-              label="CTR"
-              color={theme.ctr}
-              value={formatRate(totals.ctr, '%')}
-              hint={`${formatNumber(totals.clicks)} first clicks`}
-            />
-            {tags.map((tag) => (
-              <StatTile
-                key={tag}
-                label={`EvPM · ${tag}`}
-                color={colorOf(tag)}
-                value={formatRate(totals.evpm[tag] ?? 0, '‰')}
-                hint={`${formatNumber(totals.events[tag] ?? 0)} events`}
-              />
-            ))}
-          </div>
-
-          {points.length === 0 ? (
-            <Card className="p-10 text-center text-sm text-slate-500">
-              Nothing to show in this period with the current threshold.
+              {allTags.length > 0 && (
+                <fieldset className="flex flex-col gap-2">
+                  <legend className="mb-2 text-sm text-slate-600 dark:text-slate-400">Event types</legend>
+                  {allTags.map((tag) => (
+                    <TagToggle
+                      key={tag}
+                      tag={tag}
+                      color={colorOf(tag)}
+                      checked={tags.includes(tag)}
+                      onChange={(on) => toggleTag(tag, on)}
+                    />
+                  ))}
+                </fieldset>
+              )}
             </Card>
           ) : (
-            <Card className="p-5">
-              <ChartHeader title="CTR, %" formula={`100 × ${clickTag} / impressions`} />
-              <RateChart
-                points={points}
-                series={ctrSeries}
-                unit="%"
-                resolution={resolution}
-                minImpressions={minImpressions}
-                showPeaks={showPeaks}
-                theme={theme}
-              />
-
-              <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
-                <ChartHeader title="EvPM, ‰" formula="1000 × (type + v·type) / impressions" />
-                <RateChart
-                  points={points}
-                  series={evpmSeries}
-                  unit="‰"
-                  resolution={resolution}
-                  minImpressions={minImpressions}
-                  showPeaks={showPeaks}
-                  theme={theme}
-                />
-              </div>
-
-              <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
-                <ChartHeader
-                  title="Impressions"
-                  formula={`Per ${resolution === 'day' ? 'day' : 'hour'}; rates are hidden where volume is under the threshold`}
-                />
-                <VolumeChart points={points} resolution={resolution} theme={theme} />
-              </div>
-            </Card>
+            <button
+              type="button"
+              onClick={() => setFiltersOpen(true)}
+              title="Show filters"
+              aria-expanded={false}
+              className="flex cursor-pointer items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition-colors hover:text-slate-900 focus-visible:outline-2 focus-visible:outline-indigo-600 lg:flex-col lg:px-2 lg:py-3 dark:border-slate-800 dark:bg-slate-900 dark:text-slate-400 dark:hover:text-white"
+            >
+              <FilterIcon />
+              <span className="lg:[writing-mode:vertical-rl]">Show filters</span>
+            </button>
           )}
+        </aside>
 
-          <Card className="mt-6">
-            <details>
-              <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700 select-none dark:text-slate-300">
-                Data table
-              </summary>
-              <div className="border-t border-slate-200 dark:border-slate-800">
-                <DataTable
-                  id="trends"
-                  columns={tableColumns}
-                  state={table}
-                  rows={tableRows}
-                  rowKey={(r) => r.t}
-                  loading={loading}
-                  empty="No rows match the filters."
-                  scrollClassName="max-h-96"
+        <div className="min-w-0 flex-1">
+          {error &&<p className="mb-4 text-sm text-red-600 dark:text-red-400">{error.message}</p>}
+
+          {!data || !totals ? (
+            !error && <Spinner className="mx-auto mt-16 size-6 text-indigo-600" />
+          ) : (
+            <>
+              <div className="mb-6 grid grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4">
+                <StatTile
+                  label="Impressions"
+                  value={formatNumber(totals.impressions)}
+                  hint={
+                    range && points.length
+                      ? `${formatDay(points[0].t)} – ${formatDay(points[points.length - 1].t)}`
+                      : `${data.series.points.length} hours with impressions`
+                  }
                 />
+                <StatTile
+                  label="CTR"
+                  color={theme.ctr}
+                  value={formatRate(totals.ctr, '%')}
+                  hint={`${formatNumber(totals.clicks)} first clicks`}
+                />
+                {tags.map((tag) => (
+                  <StatTile
+                    key={tag}
+                    label={`EvPM · ${tag}`}
+                    color={colorOf(tag)}
+                    value={formatRate(totals.evpm[tag] ?? 0, '‰')}
+                    hint={`${formatNumber(totals.events[tag] ?? 0)} events`}
+                  />
+                ))}
               </div>
-            </details>
-          </Card>
-        </>
-      )}
+
+              {points.every((p) => p.ctr === null) ? (
+                <Card className="p-10 text-center text-sm text-slate-500">
+                  Nothing to show in this period with the current threshold.
+                  {minImpressions > 0 && ' Lower it in “Low-volume buckets”.'}
+                </Card>
+              ) : (
+                <Card className="p-5">
+                  <ChartHeader title="CTR, %" formula={`100 × ${clickTag} / impressions`} />
+                  <RateChart
+                    points={points}
+                    series={ctrSeries}
+                    unit="%"
+                    resolution={resolution}
+                    minImpressions={minImpressions}
+                    showPeaks={showPeaks}
+                    theme={theme}
+                  />
+
+                  <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
+                    <ChartHeader title="EvPM, ‰" formula="1000 × (type + v·type) / impressions" />
+                    <RateChart
+                      points={points}
+                      series={evpmSeries}
+                      unit="‰"
+                      resolution={resolution}
+                      minImpressions={minImpressions}
+                      showPeaks={showPeaks}
+                      theme={theme}
+                    />
+                  </div>
+
+                  <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
+                    <ChartHeader
+                      title="Impressions"
+                      formula={`Per ${resolution === 'day' ? 'day' : 'hour'}; rates are hidden where volume is under the threshold`}
+                    />
+                    <VolumeChart points={points} resolution={resolution} theme={theme} />
+                  </div>
+                </Card>
+              )}
+
+              <Card className="mt-6">
+                <details>
+                  <summary className="cursor-pointer px-4 py-3 text-sm font-medium text-slate-700 select-none dark:text-slate-300">
+                    Data table
+                  </summary>
+                  <div className="border-t border-slate-200 dark:border-slate-800">
+                    <DataTable
+                      id="trends"
+                      columns={tableColumns}
+                      state={table}
+                      rows={tableRows}
+                      rowKey={(r) => r.t}
+                      loading={loading}
+                      empty="No rows match the filters."
+                      scrollClassName="max-h-96"
+                    />
+                  </div>
+                </details>
+              </Card>
+            </>
+          )}
+        </div>
+      </div>
     </>
   )
 }

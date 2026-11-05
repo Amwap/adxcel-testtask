@@ -26,14 +26,25 @@ const MODES: { value: AttributionMode; label: string; title: string }[] = [
 export function ModeSwitch({
   mode,
   onChange,
+  stacked = false,
 }: {
   mode: AttributionMode
   onChange: (mode: AttributionMode) => void
+  /** Label above, control at full width: for a filters column. */
+  stacked?: boolean
 }) {
   return (
-    <div className="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-400">
+    <div
+      className={`flex gap-2 text-sm text-slate-600 dark:text-slate-400 ${stacked ? 'flex-col' : 'items-center'}`}
+    >
       <span>Duplicate UIDs</span>
-      <SegmentedControl label="Duplicate UIDs" value={mode} options={MODES} onChange={onChange} />
+      <SegmentedControl
+        label="Duplicate UIDs"
+        value={mode}
+        options={MODES}
+        onChange={onChange}
+        layout={stacked ? 'fill' : 'inline'}
+      />
     </div>
   )
 }

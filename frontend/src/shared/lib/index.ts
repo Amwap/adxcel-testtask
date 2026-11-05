@@ -25,3 +25,4 @@ export {
   type TableState,
 } from './table'
 export { useRequest } from './useRequest'
+export { useStoredFlag } from './useStoredFlag'

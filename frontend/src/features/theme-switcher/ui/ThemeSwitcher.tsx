@@ -43,10 +43,12 @@ const OPTIONS: { value: ThemePreference; label: string; icon: ReactNode }[] = [
   },
 ]
 
-export function ThemeSwitcher() {
+/** `vertical` stacks the options, for a narrow (collapsed) sidebar. */
+export function ThemeSwitcher({ vertical = false }: { vertical?: boolean }) {
   return (
     <SegmentedControl
       label="Color theme"
+      layout={vertical ? 'vertical' : 'inline'}
       value={useThemePreference()}
       options={OPTIONS}
       onChange={setThemePreference}
