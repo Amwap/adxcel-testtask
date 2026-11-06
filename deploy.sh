@@ -8,7 +8,8 @@ set -euo pipefail
 REPO_URL="${REPO_URL:-git@github.com:Amwap/adxcel-testtask.git}"
 BRANCH="${BRANCH:-live}"
 APP_DIR="${APP_DIR:-/home/adxcel/adxcel-testtask}"
-NGINX_SITE=/etc/nginx/sites-enabled/adxcel.amwap.dev.conf
+NGINX_AVAILABLE=/etc/nginx/sites-available/adxcel.amwap.dev.conf
+NGINX_ENABLED=/etc/nginx/sites-enabled/adxcel.amwap.dev.conf
 
 log() { printf '\n==> %s\n' "$*"; }
 
@@ -56,15 +57,15 @@ elif ! crontab -l 2>/dev/null | grep -qF "$APP_DIR/backup_db.sh"; then
     echo "0 3 * * * $APP_DIR/backup_db.sh >> $APP_DIR/backend/logs/backup.log 2>&1"; } | crontab -
 fi
 
-# 6. Host nginx: the site is a copy of nginx/nginx.conf (certbot adds SSL to the copy), so it is never
-#    overwritten here; only the commands to install or refresh it are printed
-if [ ! -e "$NGINX_SITE" ]; then
-  log "Host nginx site is not installed yet, run once:"
-  echo "    sudo cp $APP_DIR/nginx/nginx.conf $NGINX_SITE && sudo nginx -t && sudo systemctl reload nginx"
+# 6. Host nginx: sites-available/sites-enabled are symlinks to nginx/nginx.conf in the repo, so the checkout
+#    above already updated the site; reloading needs root, so only the commands are printed
+if [ ! -L "$NGINX_ENABLED" ]; then
+  log "Host nginx site is not linked yet, run once:"
+  echo "    sudo ln -sfn $APP_DIR/nginx/nginx.conf $NGINX_AVAILABLE"
+  echo "    sudo ln -sfn $NGINX_AVAILABLE $NGINX_ENABLED"
+  echo "    sudo nginx -t && sudo systemctl reload nginx"
 elif [ -n "$old_rev" ] && ! git diff --quiet "$old_rev" HEAD -- nginx/nginx.conf; then
-  log "nginx/nginx.conf changed, refresh the host copy (certbot re-adds SSL):"
-  echo "    sudo cp $APP_DIR/nginx/nginx.conf $NGINX_SITE"
-  echo "    sudo certbot install --nginx --cert-name adxcel.amwap.dev --redirect   # if SSL is set up"
+  log "nginx/nginx.conf changed, reload the host nginx:"
   echo "    sudo nginx -t && sudo systemctl reload nginx"
 fi
 

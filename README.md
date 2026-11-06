@@ -18,7 +18,8 @@
 - `frontend` — собранный SPA через `vite preview`, `127.0.0.1:8340`
 
 Единственный nginx-конфиг — `nginx/nginx.conf`: server-блок для nginx хоста (`/api` → backend,
-остальное → frontend). На сервер он копируется в `sites-enabled`, SSL туда добавляет certbot — см. [nginx/README.md](nginx/README.md).
+остальное → frontend). На сервере `sites-available` и `sites-enabled` — симлинки на него, так что
+`deploy.sh` обновляет сайт вместе с кодом — см. [nginx/README.md](nginx/README.md).
 
 `deploy.sh` и разворачивает проект с нуля, и обновляет его, повторный запуск безопасен:
 
@@ -28,8 +29,8 @@
 3. `docker compose up -d --build --wait`;
 4. запускает `sync_data`, если в `backend/data/` лежат CSV (неизменённые файлы пропускаются);
 5. добавляет в crontab пользователя ежедневный бекап БД (один раз);
-6. nginx хоста не трогает: выводит команду для копирования конфига, если сайт ещё не установлен
-   или `nginx/nginx.conf` изменился.
+6. nginx хоста не перезагружает (нужен root): выводит команды для симлинков, если сайт ещё не
+   подключён, или для reload, если `nginx/nginx.conf` изменился.
 
 Первый деплой:
 
@@ -38,7 +39,8 @@ ssh user@server 'bash -s' < deploy.sh             # другой каталог:
 scp interview.X.csv interview.y.csv user@server:/home/adxcel/adxcel-testtask/backend/data/
 ssh user@server 'bash -s' < deploy.sh             # повтор зальёт данные
 # на сервере:
-sudo cp /home/adxcel/adxcel-testtask/nginx/nginx.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
+sudo ln -sfn /home/adxcel/adxcel-testtask/nginx/nginx.conf /etc/nginx/sites-available/adxcel.amwap.dev.conf
+sudo ln -sfn /etc/nginx/sites-available/adxcel.amwap.dev.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
 sudo nginx -t && sudo systemctl reload nginx
 cd /home/adxcel/adxcel-testtask && docker compose exec -it backend python -m scripts.users create admin
 ```
