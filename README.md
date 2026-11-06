@@ -1,10 +1,34 @@
 # Campaign analytics
 
-- `backend/` — FastAPI (Python 3.11)
+- `backend/` — FastAPI (Python 3.14)
 - `frontend/` — React + Vite + TypeScript + Tailwind CSS v4
 
 Файлы данных `interview.X.csv` и `interview.y.csv` кладутся в `backend/data/` (в git не попадают).
 Бекенд работает с SQLite (`backend/data/app.db`) через SQLAlchemy 2.0.
+
+## Развёртывание в Docker
+
+Нужны только Docker и Docker Compose.
+
+```bash
+# 1. Секреты бекенда: скопировать и заменить JWT_SECRET на вывод `openssl rand -hex 32`
+cp backend/.env.example backend/.env
+
+# 2. Положить данные в backend/data/
+#    backend/data/interview.X.csv, backend/data/interview.y.csv
+
+# 3. Собрать и поднять стек (backend, frontend, nginx)
+docker compose up --build -d
+
+# 4. Залить CSV в SQLite
+docker compose exec backend python -m scripts.sync_data
+
+# 5. Создать пользователя (пароль спросит интерактивно)
+docker compose exec -it backend python -m scripts.users create admin
+```
+
+Приложение — http://localhost:8080, документация API — http://localhost:8080/api/docs.
+Логи: `docker compose logs -f`, остановка: `docker compose down`.
 
 ## Синхронизация данных в SQLite
 
@@ -153,11 +177,7 @@ git config core.hooksPath .githooks
 ## Запуск и разработка
 
 Всё запускается только в Docker, локальные venv / `npm install` не нужны.
-
-```bash
-cp backend/.env.example backend/.env    # и заменить JWT_SECRET на вывод команды
-docker compose up --build               # http://localhost:8080, API docs: /api/docs
-```
+Первый запуск — см. [Развёртывание в Docker](#развёртывание-в-docker).
 
 Тесты и линтеры (при запущенном стеке):
 
