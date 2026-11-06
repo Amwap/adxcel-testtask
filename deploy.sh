@@ -2,12 +2,12 @@
 # Deploys adxcel.amwap.dev on the server or updates an existing deployment; safe to rerun.
 #   first deploy: ssh user@server 'bash -s' < deploy.sh   (clones the repo into APP_DIR)
 #   update:       the same command, or ./deploy.sh inside APP_DIR; CI runs it on every push to live
-# Settings (env): APP_DIR (default ~/adxcel), BRANCH (live), REPO_URL (GitHub over SSH).
+# Settings (env): APP_DIR (default /home/adxcel/adxcel-testtask), BRANCH (live), REPO_URL (GitHub over SSH).
 set -euo pipefail
 
 REPO_URL="${REPO_URL:-git@github.com:Amwap/adxcel-testtask.git}"
 BRANCH="${BRANCH:-live}"
-APP_DIR="${APP_DIR:-$HOME/adxcel}"
+APP_DIR="${APP_DIR:-/home/adxcel/adxcel-testtask}"
 NGINX_SITE=/etc/nginx/sites-enabled/adxcel.amwap.dev.conf
 
 log() { printf '\n==> %s\n' "$*"; }
@@ -56,19 +56,20 @@ elif ! crontab -l 2>/dev/null | grep -qF "$APP_DIR/backup_db.sh"; then
     echo "0 3 * * * $APP_DIR/backup_db.sh >> $APP_DIR/backend/logs/backup.log 2>&1"; } | crontab -
 fi
 
-# 6. Host nginx: the site is a symlink to nginx/nginx.conf, reload it when the config changed
+# 6. Host nginx: the site is a copy of nginx/nginx.conf (certbot adds SSL to the copy), so it is never
+#    overwritten here; only the commands to install or refresh it are printed
 if [ ! -e "$NGINX_SITE" ]; then
-  log "Host nginx site is not linked yet, run once:"
-  echo "    sudo ln -s $APP_DIR/nginx/nginx.conf $NGINX_SITE && sudo nginx -t && sudo systemctl reload nginx"
+  log "Host nginx site is not installed yet, run once:"
+  echo "    sudo cp $APP_DIR/nginx/nginx.conf $NGINX_SITE && sudo nginx -t && sudo systemctl reload nginx"
 elif [ -n "$old_rev" ] && ! git diff --quiet "$old_rev" HEAD -- nginx/nginx.conf; then
-  log "nginx/nginx.conf changed, reloading host nginx"
-  if sudo -n nginx -t && sudo -n systemctl reload nginx; then :; else
-    echo "    no passwordless sudo, reload manually: sudo nginx -t && sudo systemctl reload nginx"
-  fi
+  log "nginx/nginx.conf changed, refresh the host copy (certbot re-adds SSL):"
+  echo "    sudo cp $APP_DIR/nginx/nginx.conf $NGINX_SITE"
+  echo "    sudo certbot install --nginx --cert-name adxcel.amwap.dev --redirect   # if SSL is set up"
+  echo "    sudo nginx -t && sudo systemctl reload nginx"
 fi
 
 if [ -z "$old_rev" ]; then
   log "First deploy done. Create a user:"
-  echo "    cd $APP_DIR && docker compose exec backend python -m scripts.users create admin"
+  echo "    cd $APP_DIR && docker compose exec -it backend python -m scripts.users create admin"
 fi
 log "Deployed: http://adxcel.amwap.dev"

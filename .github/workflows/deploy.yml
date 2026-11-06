@@ -32,7 +32,7 @@ jobs:
           HOST: ${{ secrets.DEPLOY_HOST }}
           USER: ${{ secrets.DEPLOY_USER }}
           PORT: ${{ secrets.DEPLOY_PORT || '22' }}
-          APP_DIR: ${{ vars.DEPLOY_APP_DIR || '~/adxcel' }}
+          APP_DIR: ${{ vars.DEPLOY_APP_DIR || '/home/adxcel/adxcel-testtask' }}
         run: |
           ssh -i ~/.ssh/id_deploy -p "$PORT" -o StrictHostKeyChecking=yes "$USER@$HOST" \
             "APP_DIR=$APP_DIR BRANCH=live bash -s" < deploy.sh

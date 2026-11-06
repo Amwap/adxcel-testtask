@@ -18,33 +18,33 @@
 - `frontend` — собранный SPA через `vite preview`, `127.0.0.1:8340`
 
 Единственный nginx-конфиг — `nginx/nginx.conf`: server-блок для nginx хоста (`/api` → backend,
-остальное → frontend). Он подключается симлинком, поэтому обновляется вместе с репозиторием.
+остальное → frontend). На сервер он копируется в `sites-enabled`, SSL туда добавляет certbot — см. [nginx/README.md](nginx/README.md).
 
 `deploy.sh` и разворачивает проект с нуля, и обновляет его, повторный запуск безопасен:
 
-1. клонирует ветку `live` в `APP_DIR` (по умолчанию `~/adxcel`) или переключает рабочую копию
+1. клонирует ветку `live` в `APP_DIR` (по умолчанию `/home/adxcel/adxcel-testtask`) или переключает рабочую копию
    на `origin/live` (локальные правки отслеживаемых файлов сбрасываются);
 2. при первом запуске создаёт `backend/.env` из `backend/.env.example` со свежим `JWT_SECRET`;
 3. `docker compose up -d --build --wait`;
 4. запускает `sync_data`, если в `backend/data/` лежат CSV (неизменённые файлы пропускаются);
 5. добавляет в crontab пользователя ежедневный бекап БД (один раз);
-6. подсказывает команду для симлинка nginx, а при изменении `nginx/nginx.conf` перезагружает
-   nginx хоста (`sudo -n`; без sudo без пароля — выводит команду).
+6. nginx хоста не трогает: выводит команду для копирования конфига, если сайт ещё не установлен
+   или `nginx/nginx.conf` изменился.
 
 Первый деплой:
 
 ```bash
-ssh user@server 'bash -s' < deploy.sh             # или APP_DIR=/srv/adxcel bash -s
-scp interview.X.csv interview.y.csv user@server:adxcel/backend/data/
+ssh user@server 'bash -s' < deploy.sh             # другой каталог: 'APP_DIR=/path bash -s'
+scp interview.X.csv interview.y.csv user@server:/home/adxcel/adxcel-testtask/backend/data/
 ssh user@server 'bash -s' < deploy.sh             # повтор зальёт данные
 # на сервере:
-sudo ln -s ~/adxcel/nginx/nginx.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
+sudo cp /home/adxcel/adxcel-testtask/nginx/nginx.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
 sudo nginx -t && sudo systemctl reload nginx
-cd ~/adxcel && docker compose exec -it backend python -m scripts.users create admin
+cd /home/adxcel/adxcel-testtask && docker compose exec -it backend python -m scripts.users create admin
 ```
 
-Обновление — тот же `deploy.sh` (или `./deploy.sh` в `APP_DIR` на сервере).
-Логи: `docker compose logs -f` в `APP_DIR`, остановка: `docker compose down`.
+Обновление — тот же `deploy.sh` (или `./deploy.sh` в `/home/adxcel/adxcel-testtask` на сервере).
+Логи: `docker compose logs -f` в `/home/adxcel/adxcel-testtask`, остановка: `docker compose down`.
 
 ### CI/CD
 
@@ -60,15 +60,13 @@ Actions заходит на сервер по SSH и выполняет там `
 | `DEPLOY_KNOWN_HOSTS` | вывод `ssh-keyscan -p <порт> <сервер>` |
 | `DEPLOY_PORT` | порт SSH, необязательно (22) |
 
-Переменная `DEPLOY_APP_DIR` (необязательно) — каталог проекта на сервере, по умолчанию `~/adxcel`.
+Переменная `DEPLOY_APP_DIR` (необязательно) — каталог проекта на сервере, по умолчанию `/home/adxcel/adxcel-testtask`.
 
-Когда появится SSL: добавить в `nginx/nginx.conf` блок `listen 443 ssl` с сертификатом,
-поставить `COOKIE_SECURE=true` в `backend/.env` на сервере и закоммитить конфиг в `live`
-(правки прямо на сервере следующий деплой сбросит).
+Включение SSL — по шагам в [nginx/README.md](nginx/README.md#ssl).
 
 ## Загрузка данных
 
-Положите `interview.X.csv` и `interview.y.csv` в `~/adxcel/backend/data/` (в git не попадают)
+Положите `interview.X.csv` и `interview.y.csv` в `/home/adxcel/adxcel-testtask/backend/data/` (в git не попадают)
 и перезапустите `deploy.sh` или залейте вручную:
 
 ```bash
@@ -79,7 +77,7 @@ docker compose exec backend python -m scripts.sync_data
 
 ## Пользователи
 
-Регистрации нет — пользователей заводит администратор (команды — в `APP_DIR` на сервере):
+Регистрации нет — пользователей заводит администратор (команды — в `/home/adxcel/adxcel-testtask` на сервере):
 
 ```bash
 docker compose exec -it backend python -m scripts.users create admin   # пароль спросит интерактивно
@@ -97,7 +95,7 @@ docker compose exec backend python -m scripts.users list
 `deploy.sh` сам добавляет в crontab пользователя деплоя ежедневный бекап в 03:00:
 
 ```
-0 3 * * * /home/<user>/adxcel/backup_db.sh >> /home/<user>/adxcel/backend/logs/backup.log 2>&1
+0 3 * * * /home/adxcel/adxcel-testtask/backup_db.sh >> /home/adxcel/adxcel-testtask/backend/logs/backup.log 2>&1
 ```
 
 Проверить: `crontab -l`. Разовый бекап: `./backup_db.sh` (или `BACKUP_KEEP=30 ./backup_db.sh`).
