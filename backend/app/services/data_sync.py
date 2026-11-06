@@ -252,10 +252,10 @@ def sync(x_path: Path, y_path: Path, *, force: bool = False) -> list[SyncResult]
 
         # Rollups are derived data: an older schema is rebuilt without reloading the CSVs
         rollup = ImpressionRollup.__table__
-        stored = {c["name"] for c in inspect(conn).get_columns(rollup.name)}
-        rollups_missing = stored != set(rollup.columns.keys()) or set(
-            conn.scalars(select(rollup.c.dimension).distinct())
-        ) != set(ROLLUP_DIMENSIONS)
+        rollups_missing = any(
+            {c["name"] for c in inspect(conn).get_columns(t.name)} != set(t.columns.keys())
+            for t in (rollup, EventRollup.__table__)
+        ) or set(conn.scalars(select(rollup.c.dimension).distinct())) != set(ROLLUP_DIMENSIONS)
         if rollups_missing or not all(r.skipped for r in results):
             _link_events(conn)
             _rebuild_rollups(conn)
