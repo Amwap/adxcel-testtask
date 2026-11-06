@@ -5,6 +5,8 @@ services:
     volumes:
       # CSV sources and the SQLite database live on the host
       - ./backend/data:/app/data
+      # backup_db.sh writes archives here
+      - ./backend/backups:/app/backups
     # Only the host nginx (nginx/nginx.conf) talks to the containers
     ports:
       - "127.0.0.1:8341:8000"

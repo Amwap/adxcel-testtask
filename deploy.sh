@@ -47,7 +47,16 @@ fi
 
 docker image prune -f >/dev/null
 
-# 5. Host nginx: the site is a symlink to nginx/nginx.conf, reload it when the config changed
+# 5. Daily DB backup at 03:00 into backend/backups/ (the cron line is added once)
+if ! command -v crontab >/dev/null; then
+  log "crontab not found, DB backups are not scheduled (install cron and rerun)"
+elif ! crontab -l 2>/dev/null | grep -qF "$APP_DIR/backup_db.sh"; then
+  log "Scheduling daily DB backup"
+  { crontab -l 2>/dev/null || true
+    echo "0 3 * * * $APP_DIR/backup_db.sh >> $APP_DIR/backend/logs/backup.log 2>&1"; } | crontab -
+fi
+
+# 6. Host nginx: the site is a symlink to nginx/nginx.conf, reload it when the config changed
 if [ ! -e "$NGINX_SITE" ]; then
   log "Host nginx site is not linked yet, run once:"
   echo "    sudo ln -s $APP_DIR/nginx/nginx.conf $NGINX_SITE && sudo nginx -t && sudo systemctl reload nginx"

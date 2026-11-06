@@ -1,20 +1,20 @@
 # Campaign analytics
 
-- `backend/` — FastAPI (Python 3.14)
+- `backend/` — FastAPI (Python 3.14), SQLite (`backend/data/app.db`)
 - `frontend/` — React + Vite + TypeScript + Tailwind CSS v4
 
-Файлы данных `interview.X.csv` и `interview.y.csv` кладутся в `backend/data/` (в git не попадают).
-Бекенд работает с SQLite (`backend/data/app.db`) через SQLAlchemy 2.0.
+Спецификация сервисов (API, метрики, аутентификация) и разработка — в [SPEC.md](SPEC.md).
 
 ## Развёртывание на adxcel.amwap.dev
 
 Ветка `live` — продакшен на http://adxcel.amwap.dev (SSL пока нет). На сервере нужны Docker
-с Compose, git и nginx; пользователь деплоя — в группе `docker` и с доступом к репозиторию
+с Compose, git, nginx и cron; пользователь деплоя — в группе `docker` и с доступом к репозиторию
 по SSH (deploy key).
 
 Стек из двух контейнеров, порты опубликованы только на `127.0.0.1`:
 
-- `backend` — uvicorn, `127.0.0.1:8341`; `backend/data/` (CSV и SQLite) смонтирован с хоста
+- `backend` — uvicorn, `127.0.0.1:8341`; `backend/data/` (CSV и SQLite) и `backend/backups/`
+  смонтированы с хоста
 - `frontend` — собранный SPA через `vite preview`, `127.0.0.1:8340`
 
 Единственный nginx-конфиг — `nginx/nginx.conf`: server-блок для nginx хоста (`/api` → backend,
@@ -27,7 +27,8 @@
 2. при первом запуске создаёт `backend/.env` из `backend/.env.example` со свежим `JWT_SECRET`;
 3. `docker compose up -d --build --wait`;
 4. запускает `sync_data`, если в `backend/data/` лежат CSV (неизменённые файлы пропускаются);
-5. подсказывает команду для симлинка nginx, а при изменении `nginx/nginx.conf` перезагружает
+5. добавляет в crontab пользователя ежедневный бекап БД (один раз);
+6. подсказывает команду для симлинка nginx, а при изменении `nginx/nginx.conf` перезагружает
    nginx хоста (`sudo -n`; без sudo без пароля — выводит команду).
 
 Первый деплой:
@@ -39,10 +40,11 @@ ssh user@server 'bash -s' < deploy.sh             # повтор зальёт д
 # на сервере:
 sudo ln -s ~/adxcel/nginx/nginx.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
 sudo nginx -t && sudo systemctl reload nginx
-cd ~/adxcel && docker compose exec backend python -m scripts.users create admin
+cd ~/adxcel && docker compose exec -it backend python -m scripts.users create admin
 ```
 
 Обновление — тот же `deploy.sh` (или `./deploy.sh` в `APP_DIR` на сервере).
+Логи: `docker compose logs -f` в `APP_DIR`, остановка: `docker compose down`.
 
 ### CI/CD
 
@@ -64,164 +66,47 @@ Actions заходит на сервер по SSH и выполняет там `
 поставить `COOKIE_SECURE=true` в `backend/.env` на сервере и закоммитить конфиг в `live`
 (правки прямо на сервере следующий деплой сбросит).
 
-Логи: `docker compose logs -f` в `APP_DIR`, остановка: `docker compose down`.
+## Загрузка данных
 
-## Синхронизация данных в SQLite
-
-Скрипт заливает CSV в таблицы `impressions` и `events`. Для каждой таблицы запоминается
-размер и mtime исходного файла (`data_sources`), поэтому повторный запуск перезагружает только
-изменившиеся файлы. `--force` перезаливает всё (нужно и после изменения схемы этих таблиц):
+Положите `interview.X.csv` и `interview.y.csv` в `~/adxcel/backend/data/` (в git не попадают)
+и перезапустите `deploy.sh` или залейте вручную:
 
 ```bash
 docker compose exec backend python -m scripts.sync_data
-docker compose exec backend python -m scripts.sync_data --force
-docker compose exec backend python -m scripts.sync_data --x data/interview.X.csv --y data/interview.y.csv
 ```
 
-Особенности данных: `uid` в логе показов не уникален (261 повтор), часть событий
-(~0.8%) ссылается на отсутствующие показы, поэтому в таблицах суррогатный `id`, а `uid` — индекс без FK.
+Повторный запуск перезагружает только изменившиеся файлы, `--force` перезаливает всё.
 
-Вместе с показами пересобираются справочники `sites` и `device_models` (уникальные значения
-с числом показов): поиск по подстроке идёт по ним (~11k и ~1.5k строк), а не сканом ~1M показов.
-Справочник `impression_facets` хранит значения `os_name` и `hardware` для фильтров-списков.
-Синхронизация также проставляет показу число его событий (`event_count`), а событию — самый
-ранний показ с тем же `uid` (`impression_id`), чтобы по ним можно было фильтровать и сортировать.
-Все колонки показов проиндексированы. После изменения схемы нужен `sync_data --force`.
+## Пользователи
 
-## API данных
-
-Все роуты требуют access-токен.
-
-- `GET /api/summary` — что и когда синхронизировано, число событий по типам, значения
-  `os_name` / `hardware`
-- `GET /api/impressions?page=&page_size=` — показы с тегами их событий
-- `GET /api/events?page=&page_size=` — события с сайтом и временем показа
-
-`page_size` ≤ 100. Ответ: `{items, total, page, page_size}`.
-
-Табличные роуты фильтруются и сортируются по любой колонке
-(`backend/app/services/table.py`). Параметры зависят от типа поля:
-
-| Тип | Параметры | Пример |
-|---|---|---|
-| текст | `<поле>=` — подстрока без учёта регистра | `model=iphone` |
-| префикс | `<поле>=` — начало значения | `uid=0000` |
-| число | `<поле>_min`, `<поле>_max` — включительно | `impressions_min=5000` |
-| дата-время | `<поле>_from`, `<поле>_to` — ISO, UTC; `to` покрывает свой день / минуту | `reg_time_to=2021-07-28` |
-| список | `<поле>=` повторяется, любое из значений | `os_name=iOS&os_name=Android` |
-
-Сортировка: `sort=<поле>&order=asc|desc`. Неверное значение → 422.
-Поля показов: `reg_time`, `uid`, `site_id`, `mm_dma` (списки точных значений:
-`mm_dma=501&mm_dma=524`; DMA сортируется по коду), `model`, `os_name`, `hardware`,
-`fc_imp_chk`, `fc_time_chk`, `utmtr` (коды), `events` (есть событие типа; сортировка — по числу
-событий). Поля событий: `tag`, `uid`, `reg_time`, `site_id` (последние два — из самого раннего
-показа с этим `uid`).
-
-Во фронтенде все таблицы (`shared/ui/data-table`) устроены одинаково: у каждой колонки
-сортировка по клику на заголовок и фильтр по её типу (воронка), колонки меняют ширину за край
-заголовка и переставляются перетаскиванием или через меню «Columns». Ширина и порядок
-запоминаются в браузере, фильтры и сортировка — в URL. Параметры всей таблицы (группировка,
-тип события, строк на странице) и активные фильтры — в панели над таблицей.
-
-Фильтры по DMA и сайту, как и выбор сегмента на Trends, — поле с поиском в духе select2
-(`shared/ui/Combobox`): вводится часть названия DMA или домена, у DMA ещё и начало кода
-(`york`, `50`), подсказки идут по убыванию показов, выбранные значения становятся «чипами»,
-работают стрелки, Enter и Backspace. В фильтр уходят точные выбранные значения.
-
-## Метрики кампании
-
-- **CTR** = 100 · `fclick` / показы, %
-- **EvPM** = 1000 · события типа / показы, ‰; view-through склеивается с базовым типом
-  (`registration` + `vregistration`)
-- События, `uid` которых нет в логе показов, в метрики не попадают
-- `mode` — как считать событие, если у его `uid` несколько показов:
-  `first` — только для самого раннего показа, `all` — для каждого из них
-
-На странице Trends графики CTR и EvPM идут друг под другом с общим курсором, под ними —
-объём показов. По умолчанию каждая точка — скользящее окно за 24 часа (метрика считается
-как сумма событий / сумма показов в окне, а не среднее процентов), есть режимы «по часам» и
-«по дням». Бакеты с малым числом показов (по умолчанию < 100) не рисуются: именно они давали
-пики вроде CTR 33% на трёх показах. Если выбросы всё же остаются, ось Y обрезается по 98-му
-перцентилю, а точки за шкалой отмечаются ▲. EvPM можно строить сразу для нескольких типов
-событий (чекбоксы); все типы приходят одним запросом, переключение мгновенное.
-Период выбирается полями дат (сохраняется в URL),
-плитки с итогами считаются за выбранный период.
-
-Графики можно сузить до одного DMA или сайта (`?dma=501`, `?site=nypost.com`). В списке
-только сегменты от 5 000 показов (~40 DMA и ~20 сайтов): у меньших почти все часовые бакеты
-ниже порога, и CTR превращается в шум. Любой сегмент, включая мелкий, открывается кликом по
-его ключу в таблице Aggregates. Для сегмента лучше подходят режимы «24 ч» и «по дням».
-
-Метрики читаются из предрасчитанных таблиц `rollup_impressions` / `rollup_events`
-(показы и события по часу, `mm_dma`, `site_id` и по часу внутри каждого DMA и сайта ×
-тип × режим), которые `sync_data` пересобирает при любой перезагрузке данных. Поэтому
-графики и агрегаты отвечают за миллисекунды и не сканируют миллион показов. Если схема
-роллапов изменилась, `sync_data` пересоберёт только их, без перезаливки CSV.
-
-- `GET /api/metrics/event-types` — типы событий (без префикса `v`)
-- `GET /api/metrics/timeseries?tag=&tag=…&mode=&granularity=hour|day` — ряд CTR и EvPM
-  по каждому из типов (`tag` повторяется, до 16), счётчики и итоги; `mm_dma=` или `site_id=`
-  (не оба сразу) сужают ряд до одного сегмента
-- `GET /api/metrics/aggregates/{mm_dma|site_id}?tag=&mode=&page=&page_size=` — таблица
-  агрегатов со строкой итогов по отфильтрованным строкам (`totals`), по умолчанию по убыванию
-  показов; фильтры и сортировка по колонкам `key`, `impressions`, `clicks`, `events`, `ctr`,
-  `evpm`. У DMA есть ещё `name` — название региона из статичного справочника
-  [backend/app/data/dma.csv](backend/app/data/dma.csv) (210 регионов Nielsen, код 0 —
-  `Unknown`). `key` принимает точные значения (`key=501&key=524`), сортировка `key` у DMA —
-  по коду
-- `GET /api/metrics/segments/{mm_dma|site_id}?q=&limit=&min_impressions=` — подсказки для
-  полей выбора DMA и сайта по убыванию показов: часть домена, у DMA — часть названия или
-  начало кода (`q=york`, `q=50`)
-- `GET /api/metrics/dma-regions` — справочник DMA `[{code, name}]`; фронт показывает регион
-  как `(501) New York, NY`, длинные названия сокращает (`(566) Harrisburg-Lancaster…, PA`) и
-  выводит полностью в подсказке
-
-## Аутентификация
-
-JWT без регистрации и восстановления пароля — пользователей заводит администратор командой.
-Пароли хешируются argon2id (`pwdlib`).
-
-- `POST /api/auth/login` (form: `username`, `password`) → access-токен (15 мин) в теле
-  + refresh-токен (7 дней) в httpOnly-cookie на пути `/api/auth`
-- `POST /api/auth/refresh` → новый access-токен по cookie
-- `POST /api/auth/logout` → отзывает все токены пользователя
-- `GET /api/auth/me` → текущий пользователь
-
-Защищённый роут: добавьте параметр `user: CurrentUser` (из `app.api.deps`).
-У каждого пользователя есть `token_version`, зашитый в JWT; logout, смена пароля и деактивация
-его увеличивают, поэтому все ранее выданные токены перестают работать.
-
-Секрет `JWT_SECRET` (≥ 32 символа) обязателен и хранится в `backend/.env`
-(скопируйте из `backend/.env.example`). Docker compose подключает этот же файл через `env_file`.
+Регистрации нет — пользователей заводит администратор (команды — в `APP_DIR` на сервере):
 
 ```bash
-docker compose exec backend python -m scripts.users create alice          # пароль спросит интерактивно
-docker compose exec backend python -m scripts.users set-password alice
-docker compose exec backend python -m scripts.users deactivate alice      # / activate
+docker compose exec -it backend python -m scripts.users create admin   # пароль спросит интерактивно
+docker compose exec -it backend python -m scripts.users set-password admin
+docker compose exec backend python -m scripts.users deactivate admin   # / activate
 docker compose exec backend python -m scripts.users list
 ```
 
-## Git
+## Автоматические бекапы
 
-После клонирования включите хуки (pre-commit не даёт закоммитить файлы > 50 МБ):
+`backup_db.sh` делает копию БД из запущенного контейнера (приложение не
+останавливается) в `backend/backups/app-<UTC-время>.db.gz` и хранит последние `BACKUP_KEEP`
+архивов (по умолчанию 14).
 
-```bash
-git config core.hooksPath .githooks
+`deploy.sh` сам добавляет в crontab пользователя деплоя ежедневный бекап в 03:00:
+
+```
+0 3 * * * /home/<user>/adxcel/backup_db.sh >> /home/<user>/adxcel/backend/logs/backup.log 2>&1
 ```
 
-## Запуск и разработка
+Проверить: `crontab -l`. Разовый бекап: `./backup_db.sh` (или `BACKUP_KEEP=30 ./backup_db.sh`).
 
-Всё запускается только в Docker, локальные venv / `npm install` не нужны. На ветке `live`
-стек собран для продакшена (без hot reload и смонтированных исходников): после правок —
-`docker compose up -d --build`.
-
-Тесты и линтеры (тесты в образ не входят, поэтому `backend/` монтируется; путь — абсолютный):
+Восстановление (файлы БД принадлежат root контейнера, поэтому распаковка — тоже в контейнере):
 
 ```bash
-docker compose run --rm --no-deps -v "$PWD/backend:/app" backend pytest
-docker compose run --rm --no-deps -v "$PWD/backend:/app" backend ruff check .
-docker compose run --rm --no-deps -v "$PWD/backend:/app" backend ruff format --check .
-docker compose run --rm --no-deps frontend npm run lint
+docker compose stop backend
+docker compose run --rm --no-deps backend sh -c \
+  'rm -f data/app.db-wal data/app.db-shm && gunzip -c backups/app-20261106-030000.db.gz > data/app.db'
+docker compose start backend
 ```
-
-Сборка фронтенда (`npm run build`, включая `tsc`) выполняется при сборке образа.
