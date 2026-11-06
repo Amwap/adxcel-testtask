@@ -13,4 +13,5 @@ COPY app ./app
 COPY scripts ./scripts
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Behind the host nginx: trust its X-Forwarded-* headers (port is published on 127.0.0.1 only)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]

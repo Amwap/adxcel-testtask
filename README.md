@@ -6,29 +6,65 @@
 Файлы данных `interview.X.csv` и `interview.y.csv` кладутся в `backend/data/` (в git не попадают).
 Бекенд работает с SQLite (`backend/data/app.db`) через SQLAlchemy 2.0.
 
-## Развёртывание в Docker
+## Развёртывание на adxcel.amwap.dev
 
-Нужны только Docker и Docker Compose.
+Ветка `live` — продакшен на http://adxcel.amwap.dev (SSL пока нет). На сервере нужны Docker
+с Compose, git и nginx; пользователь деплоя — в группе `docker` и с доступом к репозиторию
+по SSH (deploy key).
+
+Стек из двух контейнеров, порты опубликованы только на `127.0.0.1`:
+
+- `backend` — uvicorn, `127.0.0.1:8341`; `backend/data/` (CSV и SQLite) смонтирован с хоста
+- `frontend` — собранный SPA через `vite preview`, `127.0.0.1:8340`
+
+Единственный nginx-конфиг — `nginx/nginx.conf`: server-блок для nginx хоста (`/api` → backend,
+остальное → frontend). Он подключается симлинком, поэтому обновляется вместе с репозиторием.
+
+`deploy.sh` и разворачивает проект с нуля, и обновляет его, повторный запуск безопасен:
+
+1. клонирует ветку `live` в `APP_DIR` (по умолчанию `~/adxcel`) или переключает рабочую копию
+   на `origin/live` (локальные правки отслеживаемых файлов сбрасываются);
+2. при первом запуске создаёт `backend/.env` из `backend/.env.example` со свежим `JWT_SECRET`;
+3. `docker compose up -d --build --wait`;
+4. запускает `sync_data`, если в `backend/data/` лежат CSV (неизменённые файлы пропускаются);
+5. подсказывает команду для симлинка nginx, а при изменении `nginx/nginx.conf` перезагружает
+   nginx хоста (`sudo -n`; без sudo без пароля — выводит команду).
+
+Первый деплой:
 
 ```bash
-# 1. Секреты бекенда: скопировать и заменить JWT_SECRET на вывод `openssl rand -hex 32`
-cp backend/.env.example backend/.env
-
-# 2. Положить данные в backend/data/
-#    backend/data/interview.X.csv, backend/data/interview.y.csv
-
-# 3. Собрать и поднять стек (backend, frontend, nginx)
-docker compose up --build -d
-
-# 4. Залить CSV в SQLite
-docker compose exec backend python -m scripts.sync_data
-
-# 5. Создать пользователя (пароль спросит интерактивно)
-docker compose exec -it backend python -m scripts.users create admin
+ssh user@server 'bash -s' < deploy.sh             # или APP_DIR=/srv/adxcel bash -s
+scp interview.X.csv interview.y.csv user@server:adxcel/backend/data/
+ssh user@server 'bash -s' < deploy.sh             # повтор зальёт данные
+# на сервере:
+sudo ln -s ~/adxcel/nginx/nginx.conf /etc/nginx/sites-enabled/adxcel.amwap.dev.conf
+sudo nginx -t && sudo systemctl reload nginx
+cd ~/adxcel && docker compose exec backend python -m scripts.users create admin
 ```
 
-Приложение — http://localhost:8080, документация API — http://localhost:8080/api/docs.
-Логи: `docker compose logs -f`, остановка: `docker compose down`.
+Обновление — тот же `deploy.sh` (или `./deploy.sh` в `APP_DIR` на сервере).
+
+### CI/CD
+
+`.github/workflows/deploy.yml`: на каждый push в `live` (и вручную, «Run workflow») GitHub
+Actions заходит на сервер по SSH и выполняет там `deploy.sh`. Деплои идут строго по одному.
+Секреты репозитория (Settings → Secrets and variables → Actions):
+
+| Секрет | Значение |
+|---|---|
+| `DEPLOY_HOST` | адрес сервера |
+| `DEPLOY_USER` | пользователь деплоя |
+| `DEPLOY_SSH_KEY` | приватный ключ, публичный — в `~/.ssh/authorized_keys` этого пользователя (`ssh-keygen -t ed25519 -N '' -f deploy_key`) |
+| `DEPLOY_KNOWN_HOSTS` | вывод `ssh-keyscan -p <порт> <сервер>` |
+| `DEPLOY_PORT` | порт SSH, необязательно (22) |
+
+Переменная `DEPLOY_APP_DIR` (необязательно) — каталог проекта на сервере, по умолчанию `~/adxcel`.
+
+Когда появится SSL: добавить в `nginx/nginx.conf` блок `listen 443 ssl` с сертификатом,
+поставить `COOKIE_SECURE=true` в `backend/.env` на сервере и закоммитить конфиг в `live`
+(правки прямо на сервере следующий деплой сбросит).
+
+Логи: `docker compose logs -f` в `APP_DIR`, остановка: `docker compose down`.
 
 ## Синхронизация данных в SQLite
 
@@ -156,8 +192,7 @@ JWT без регистрации и восстановления пароля �
 его увеличивают, поэтому все ранее выданные токены перестают работать.
 
 Секрет `JWT_SECRET` (≥ 32 символа) обязателен и хранится в `backend/.env`
-(скопируйте из `backend/.env.example`). Docker compose подключает этот же файл через `env_file`,
-пути и CORS для контейнера переопределяются в `environment`.
+(скопируйте из `backend/.env.example`). Docker compose подключает этот же файл через `env_file`.
 
 ```bash
 docker compose exec backend python -m scripts.users create alice          # пароль спросит интерактивно
@@ -176,27 +211,17 @@ git config core.hooksPath .githooks
 
 ## Запуск и разработка
 
-Всё запускается только в Docker, локальные venv / `npm install` не нужны.
-Первый запуск — см. [Развёртывание в Docker](#развёртывание-в-docker).
+Всё запускается только в Docker, локальные venv / `npm install` не нужны. На ветке `live`
+стек собран для продакшена (без hot reload и смонтированных исходников): после правок —
+`docker compose up -d --build`.
 
-Тесты и линтеры (при запущенном стеке):
+Тесты и линтеры (тесты в образ не входят, поэтому `backend/` монтируется; путь — абсолютный):
 
 ```bash
-docker compose exec backend pytest
-docker compose exec backend ruff check .
-docker compose exec backend ruff format --check .
-docker compose exec frontend npm run lint
-docker compose exec frontend npm run build
+docker compose run --rm --no-deps -v "$PWD/backend:/app" backend pytest
+docker compose run --rm --no-deps -v "$PWD/backend:/app" backend ruff check .
+docker compose run --rm --no-deps -v "$PWD/backend:/app" backend ruff format --check .
+docker compose run --rm --no-deps frontend npm run lint
 ```
 
-Оба приложения работают с hot reload: исходники смонтированы в контейнеры.
-
-- `backend` — `uvicorn --reload`, перезапускается при изменениях в `backend/app/`
-- `frontend` — Vite dev server с HMR
-- `nginx` — единственный конфиг `nginx/nginx.conf`: `/api` проксирует на backend,
-  остальное (включая websocket HMR) — на Vite. После правки: `docker compose restart nginx`.
-
-Файловые события с Windows/macOS в контейнер доходят ненадёжно, поэтому слежение
-работает через polling (`WATCHFILES_FORCE_POLLING`, `VITE_WATCH_POLLING`).
-После изменения зависимостей пересоберите образ: `docker compose up --build`
-(`node_modules` фронтенда живёт в анонимном томе — при необходимости добавьте `-V`).
+Сборка фронтенда (`npm run build`, включая `tsc`) выполняется при сборке образа.

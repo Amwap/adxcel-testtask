@@ -1,18 +1,13 @@
 services:
   backend:
     build: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
     env_file: ./backend/.env
-    environment:
-      DATA_DIR: /app/data
-      DB_PATH: /app/data/app.db
-      CORS_ORIGINS: '["http://localhost:8080"]'
-      # Bind mounts from a Windows/macOS host don't deliver inotify events reliably
-      WATCHFILES_FORCE_POLLING: "true"
     volumes:
-      - ./backend:/app
-    expose:
-      - "8000"
+      # CSV sources and the SQLite database live on the host
+      - ./backend/data:/app/data
+    # Only the host nginx (nginx/nginx.conf) talks to the containers
+    ports:
+      - "127.0.0.1:8341:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health')"]
       interval: 10s
@@ -22,26 +17,9 @@ services:
 
   frontend:
     build: ./frontend
-    environment:
-      VITE_API_PROXY_TARGET: http://backend:8000
-      VITE_WATCH_POLLING: "true"
-    volumes:
-      - ./frontend:/app
-      # Keep the container's own (Linux) node_modules instead of the host's
-      - /app/node_modules
-    expose:
-      - "5173"
-    restart: unless-stopped
-
-  nginx:
-    image: nginx:1.29-alpine
     ports:
-      - "8080:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - "127.0.0.1:8340:4173"
     depends_on:
       backend:
         condition: service_healthy
-      frontend:
-        condition: service_started
     restart: unless-stopped
